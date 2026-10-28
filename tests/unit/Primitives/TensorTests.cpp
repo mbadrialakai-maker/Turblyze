@@ -119,6 +119,28 @@ TEST_CASE("Tensor outer and double-dot identities", "[primitives]")
 
     // Frobenius squared magnitude is the tensor double-dotted with itself
     REQUIRE(A.magnitudeSquared() == doubleDot(A, A));
+
+    // Inner product with the identity returns the original tensor
+    const Tensor I
+    (
+        S(1.0), S(0.0), S(0.0),
+        S(0.0), S(1.0), S(0.0),
+        S(0.0), S(0.0), S(1.0)
+    );
+    requireExactEqual(dot(A, I), A);
+    requireExactEqual(dot(I, A), A);
+
+    // Hand-evaluated inner product A . B
+    const Tensor expectedAB
+    (
+        S(30.0),  S(24.0),  S(18.0),
+        S(84.0),  S(69.0),  S(54.0),
+        S(138.0), S(114.0), S(90.0)
+    );
+    requireExactEqual(dot(A, B), expectedAB);
+
+    // Non-commuting pair: dot(A, B) != dot(B, A)
+    REQUIRE_FALSE(dot(A, B) == dot(B, A));
 }
 
 // *************************** Strain-Rate Magnitude **************************
