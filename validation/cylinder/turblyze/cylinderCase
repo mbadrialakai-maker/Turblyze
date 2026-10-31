@@ -56,7 +56,25 @@ boundaryConditions
             type        noSlip;
         }
 
-        // symmetry planes boundary conditions are derived from the mesh
+        symmetry1
+        {
+            type        symmetry;
+        }
+
+        symmetry2
+        {
+            type        symmetry;
+        }
+
+        symmetry3
+        {
+            type        symmetry;
+        }
+
+        symmetry4
+        {
+            type        symmetry;
+        }
     }
 
     p   // kinematic Pressure [m2/s2]
@@ -75,6 +93,26 @@ boundaryConditions
         cylinder
         {
             type        zeroGradient;
+        }
+
+        symmetry1
+        {
+            type        symmetry;
+        }
+
+        symmetry2
+        {
+            type        symmetry;
+        }
+
+        symmetry3
+        {
+            type        symmetry;
+        }
+
+        symmetry4
+        {
+            type        symmetry;
         }
     }
 }
