@@ -13,6 +13,7 @@ and figures).
 |---|---|---|---|
 | Sphere drag curve | Steady, laminar + k-omega SST | Morrison (2013) correlation | [`sphere/`](sphere/) |
 | Cylinder vortex street | Transient (PISO), laminar | von Kármán shedding, Re ≈ 150 | [`cylinder/`](cylinder/) |
+| Taylor-Green vortex | Transient (PISO), LES (WALE & Smagorinsky) | Re = 1600 DNS (van Rees 2011, DeBonis 2013) | [`LES/TaylorGreen/`](LES/TaylorGreen/) |
 
 - **`sphere/`** : steady-state drag over a wide Re range, exercising the
   SIMPLE algorithm with turbulence off (low-Re) and k-omega SST.
