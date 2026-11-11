@@ -15,14 +15,16 @@ This document explains the internal architecture and implementation details of t
 - Numerical schemes (gradients, convection, diffusion)
 - Linear system assembly (`Matrix`)
 - Parallelization (MPI)
-- SIMPLE algorithm (pressure–velocity coupling)
+- Segregated pressure–velocity coupling (`MomentumTransport` / `Segregated` / `SIMPLE` & `PISO`) and flow initialization
 - Rhie–Chow face-velocity interpolation
-- Turbulence model (k–omega SST)
+- Turbulence models (`TurbulenceModel` / `RANS` / `kOmegaSST` / `LES` / `Smagorinsky` / `WALE` / `Laminar`)
 - Post-processing and VTKHDF export
 - Linear solvers
 - Precision and numerical tolerances
+- Class ownership patterns
 - Extending the codebase (recipes)
-- Debugging and tips
+- Testing and debugging
+- Case system and call flow
 
 ### Architecture overview (Current Structure)
 
@@ -30,16 +32,16 @@ Headers (`.h`) and implementations (`.cpp`) live together in the same folder und
 following the OpenFOAM convention.
 
 - **`src/Primitives/`**: foundation types with no mesh-specific semantics
-  - `Scalar.h`, `Vector.h/.cpp`, `Tensor.h/.cpp`,
+  - `Scalar.h`, `Vector.h`, `Tensor.h`,
     `Integer.h`, `StringTypes.h`, `ErrorHandler.h`, `Logger.h/.cpp`
 - **`src/Mesh/`**: mesh topology, geometric entities and mesh I/O
-  - `BoundaryPatch.h`, `Face.h/.cpp`, `Cell.h/.cpp`, `Mesh.h`,
+  - `BoundaryPatch.h`, `Face.h/.cpp`, `Cell.h/.cpp`, `MeshContainers.h`, `Mesh.h`,
     `MeshReader.h/.cpp`, `MeshChecker.h/.cpp`, `MeshCreator.h/.cpp`
 - **`src/Fields/`**: typed field containers and field identity used by all layers
   - `CellData.h`, `FaceData.h`, `Field.h/.cpp`
 - **`src/BoundaryConditions/`**: patch metadata and physical BC configuration
-  - `BoundaryConditions.h/.cpp`, `BoundaryTypes/` (one class per BC type),
-    `BCLoader.h/.cpp`
+  - `BoundaryConditions.h/.cpp`, `BoundaryCoeffs.h`, `BoundaryTypeFactory.h/.cpp`,
+    `BoundaryTypes/` (one class per BC type), `BCLoader.h/.cpp`
 - **`src/Schemes/`**: discretization schemes, grouped by family
   - `ConvectionSchemes/`: `ConvectionScheme.h/.cpp` (abstract base + runtime selection) plus one
     header/implementation pair per concrete scheme: `Upwind.h/.cpp`,
@@ -52,7 +54,8 @@ following the OpenFOAM convention.
     `CrankNicolson.h`, `SecondOrderImplicit.h`, each reporting the d/dt contribution to the implicit
     diagonal and explicit source
 - **`src/LinearSystem/`**: algebraic system assembly and solving
-  - `Matrix.h/.cpp`, `LinearSolvers.h/.cpp`, `TransportEquation.h`
+  - `PETScRuntime.h/.cpp`, `Matrix.h/.cpp`, `LinearSolvers.h/.cpp`,
+    `TransportEquation.h`, `Cramer3x3.h`, `Cramer4x4.h`
 - **`src/Parallel/`**: MPI runtime, mesh decomposition and inter-rank data movement
   - `MPIRuntime.h/.cpp` (RAII ownership of the MPI runtime), `Comm.h/.cpp`
     (rank identity), `Reduce.h/.cpp` (global reductions),
@@ -60,10 +63,10 @@ following the OpenFOAM convention.
   - `MeshDecomposer.h/.cpp` (METIS partitioning into per-rank submeshes),
     `MeshDistributor.h/.cpp` (ships each rank its block), `SubmeshData.h`,
     `ProcessorPatch.h` (metadata of one inter-rank cut),
-    `HaloExchange.h` (header-only ghost-cell update),
+    `HaloExchange.h/.cpp` (ambient ghost-cell halo exchange and ghost indices),
     `GlobalIndex.h/.cpp` (local-to-global cell numbering for PETSc)
 - **`src/Solver/`**: segregated pressure–velocity algorithms (a three-level
-  hierarchy)
+  hierarchy) and flow field initialization
   - `MomentumTransport.h/.cpp`: abstract base and the single driver `solve()`
     (steady with no arguments, transient per step with a `TransientFields*`),
     turbulence advance, convergence/Courant/residual orchestration,
@@ -80,11 +83,18 @@ following the OpenFOAM convention.
     implement only `outerIteration()` + `algorithmName()`. A future
     fully-coupled block-matrix solver would be a sibling of `Segregated`
     under `MomentumTransport`
+  - `Initialization/`: `Initializer.h/.cpp` (abstract base + runtime selection),
+    `Uniform.h/.cpp` (uniform initial fields), `TaylorGreen.h/.cpp` (analytical
+    3D Taylor–Green vortex), `PotentialFlow.h/.cpp` (Poisson-projected
+    divergence-free velocity and Bernoulli pressure)
 - **`src/Models/`**: physical models
   - `Turbulence/TurbulenceModel.h/.cpp` (abstract interface),
     `Turbulence/Laminar/Laminar.h` (laminar null-object),
     `Turbulence/RANS/RANS.h/.cpp` (two-equation eddy-viscosity base),
-    `Turbulence/RANS/kOmegaSST.h/.cpp` (k–omega SST model)
+    `Turbulence/RANS/kOmegaSST.h/.cpp` (k–omega SST model),
+    `Turbulence/LES/LES.h/.cpp` (sub-grid scale LES base),
+    `Turbulence/LES/Smagorinsky.h/.cpp` (Smagorinsky SGS model with optional Van Driest damping),
+    `Turbulence/LES/WALE.h/.cpp` (Wall-Adapting Local Eddy-viscosity SGS model)
 - **`src/PostProcessing/`**: derived fields and output orchestration
   - `DerivedFields.h/.cpp` (velocity/vorticity magnitude, Q-criterion, strain rate)
   - `PostProcess.h/.cpp` (after-solve statistics and export orchestration)
@@ -92,12 +102,12 @@ following the OpenFOAM convention.
   - `VTK/HDF5Wrapper.h/.cpp` (thin helpers over the HDF5 C API for VTKHDF authoring)
   - `VTK/HDF5CellData.h/.cpp` (`.vtkhdf` polyhedral cell/volume data writer)
   - `VTK/HDF5BoundaryData.h/.cpp` (`.vtkhdf` wall/patch boundary face writer)
-- **`src/Case/`**: OpenFOAM-style case file parser
-  - `CaseReader.h/.cpp`, `CaseConfiguration.h/.cpp`
+- **`src/Case/`**: OpenFOAM-style case file parser and runtime selection validation
+  - `CaseReader.h/.cpp`, `CaseConfiguration.h/.cpp`, `RuntimeSelection.h/.cpp`
 - **`src/Application/`**: top-level orchestration and solver assembly
   - `CFDApplication.h/.cpp`, `SolverSetup.h/.cpp`
-- **`src/main.cpp`**: command-line entry point, calls `CFDApplication::run(caseFile)`
-  and starts the simulation workflow
+- **`src/main.cpp`**: command-line entry point, initializes `MPIRuntime` and
+  `PETScRuntime`, and calls `CFDApplication::run(caseFile)`
 
 
 ## Core data structures
@@ -108,39 +118,45 @@ following the OpenFOAM convention.
   `TURBLYZE_DOUBLE_PRECISION` for the target.
 - Switch to float with `-DTURBLYZE_DOUBLE_PRECISION=OFF`. The program
   prints the active mode via `SCALAR_MODE`.
-- Global tolerances in `src/Primitives/Scalar.h` (e.g., `smallValue`, `vSmallValue`, `largeValue`).
+- Global tolerances in `src/Primitives/Scalar.h` (`smallValue` and `vSmallValue`),
+  plus the `S()` literal conversion helper and `ScalarList`.
 
 ### Vector
-- Simple 3D vector with arithmetic, `dot`, `cross`, `magnitude`, normalization, and stream IO.
+- Header-only 3D vector (`src/Primitives/Vector.h`) with arithmetic, `dot`,
+  `cross`, `magnitude`, `magnitudeSquared`, normalization (`normalized`,
+  `normalize`), component indexing, and equality comparison.
 - Used throughout for geometry (centroids, normals) and vector fields.
 
 ### Tensor
-- 3x3 second-order tensor with arithmetic, `transpose`, `symm`, `skew`, `trace`, `doubleDot`, `outer`, equality comparison, and stream IO.
+- Header-only 3×3 second-order tensor (`src/Primitives/Tensor.h`) with
+  arithmetic, `transpose`, `symm`, `skew`, `trace`, `magnitudeSquared`, `col`,
+  `tensorFromRows`, `dot`, `doubleDot`, `outer`, and equality comparison.
 - Used for velocity gradients, strain-rate, rotation, Reynolds-stress tensors, and tensor fields.
 
 ### Fields
-- `CellData<T>`: typed cell-centered fields sized from `Mesh::cellCount()`.
-- `FaceData<T>`: typed face-centered fields sized from `Mesh::faceCount()`.
+- `CellData<T>`: typed cell-centered fields constructed with `const Mesh&` and sized from `mesh.numCells()` (domain cells plus any MPI halo tail).
+- `FaceData<T>`: typed face-centered fields constructed with `const Mesh&` and sized from `mesh.numFaces()`.
 - Type aliases:
-  - `VectorField`, `ScalarField`, `TensorField`
-  - `FaceFluxField` (Scalar), `FaceVectorField` (Vector)
+  - `VectorField` (`CellData<Vector>`), `ScalarField` (`CellData<Scalar>`), `TensorField` (`CellData<Tensor>`)
+  - `FaceFluxField` (`FaceData<Scalar>`)
 
 ### Mesh entities
 - `Face`
-  - Topology: `nodeIndices`, `ownerCell`, optional `neighborCell` (boundary if empty).
+  - Topology: `nodeIndices`, `ownerCell`, optional `neighborCell` (boundary if empty), and boundary `patch()` pointer (`const BoundaryPatch*`).
   - Geometry computed in `geometricProperties(allNodes)`:
     - Triangles via cross product; polygons triangulated about the face center.
     - Fields: `centroid`, `normal` (unit), `projectedArea`,
       `contactArea`, and returned `FaceIntegrals` (`x2`, `y2`, `z2`,
       `volume`).
-  - Metric distances `distances(allCells)`:
-    - `dPf`, optional `dNf`, and their stored magnitudes.
 - `Cell`
   - Topology: lists of `faceIndices`, `neighborCellIndices`, and
     `faceSigns` (owner `+1`, neighbor `-1`).
-  - `geometricProperties(allFaces, allFaceIntegrals)`:
+  - `geometricProperties(allFaceIntegrals)`:
     - Volume via divergence theorem: `V = (1/3) Σ (rf · Sf)` using face integrals.
     - Centroid via second-moment accumulation.
+- `Mesh`
+  - Owns the complete mesh topology (`nodes()`, `faces()`, `cells()`, `patches()`) and size queries (`numNodes()`, `numFaces()`, `numCells()`, `numDomainCells()`, `numHaloCells()`, `isDecomposed()`).
+  - Computes face-to-cell distance vectors and diffusion weights on demand: `dPf(face)`, `dNf(face)`, `dPN(face)`, and `gDiff(face)` ($|E_f| / (|S_f| \cdot |d_{Pf}|)$).
 
 
 ## Mesh I/O and topology building
@@ -149,7 +165,7 @@ following the OpenFOAM convention.
 - Sections: comments `(0)`, dimension `(2)`, nodes `(10)`, cells `(12)`, faces `(13)`, boundaries `(45)`.
 - Fluent uses hexadecimal indices for declarations; helpers convert hex→dec robustly.
 - Faces section returns owner and optional neighbor cell; neighbor absent implies boundary.
-- Boundaries section maps `zoneIdx` to `BoundaryPatch` name/type via `MeshReader::mapFluentBCToEnum`.
+- Boundaries section maps `zoneIdx` to `BoundaryPatch` name; all mesh boundaries are marked as `PatchType::physical`.
 - After reading:
   - Builds `Cell.faceIndices`, `Cell.faceSigns` (+1 owner, -1 neighbor),
     and `neighborCellIndices`.
@@ -166,64 +182,59 @@ Notes:
 
 ### Architecture
 **Classes**:
-- `BoundaryPatch`: Mesh patch metadata (name, Fluent type, `zoneIdx`, first/last face indices)
+- `BoundaryPatch`: Mesh patch metadata (`name()`, `type()` as `PatchType::physical` or `PatchType::processor`, `zoneIdx()`, `firstFaceIdx()`, `lastFaceIdx()`, `numFaces()`)
 - `BoundaryType` (`src/BoundaryConditions/BoundaryTypes/`): abstract base of one
   polymorphic boundary condition per (patch, field) pair; one derived class
   per type: `FixedValue` (+ `NoSlip`), `FixedGradient`,
   `ZeroGradient` (+ `WallFunction` marker), `Symmetry`
-- `BoundaryConditions`: owner of the cold `BoundaryType` registry, the hot
-  per-field coefficient arrays, the shared boundary-geometry cache, and the
-  per-face trait flag arrays
+- `BoundaryTypeFactory`: runtime selection of boundary-condition types by
+  case-file token
+- `BoundaryConditions`: manager of boundary conditions across the mesh,
+  providing `boundaryType()`, `find()`, `faceValue(face, ownerValue, field)`,
+  `refresh(mesh, Ux, Uy, Uz)`, and `printSummary()`
 
 ### The coefficient contract
 Every boundary condition linearizes its physics into two channels, written
-patch-wise by `BoundaryType::updateCoeffs()` into flat compact-boundary-indexed
-arrays (`BoundaryCoeffs`):
+patch-wise by `BoundaryType::updateCoeffs()` into patch-local arrays
+(`BoundaryCoeffs` owned per `(patch, field)` inside `BoundaryType::coeffs_`,
+sized to `patch.numFaces()` and indexed by `localIdx = face.idx() - patch.firstFaceIdx()`):
 
-- **value channel**: `φf = a·φP + b` — consumed by `boundaryFaceValue()`
+- **value channel**: `φf = a·φP + b` — consumed by `faceValue()`
   (gradient stencils, Rhie-Chow face velocities, forces) and by the
   convection contribution of `Matrix::assembleBoundaryFace()`
 - **gradient channel**: diffusive flux `diag += -Γf·|Sf|·c`,
   `rhs += Γf·|Sf|·d` — consumed by `Matrix::assembleBoundaryFace()`
 
-Per class: `FixedValue(v)`: `a=0, b=v, c=-dm, d=v·dm` (`dm` is the
-orthogonal diffusion metric `|Ef|/(|Sf|·|dPf|)`); `FixedGradient(g)`:
-`a=1, b=g·dn, c=0, d=g`; `ZeroGradient` and the wall-function markers:
-`a=1, b=0, c=0, d=0`; `Symmetry` on velocity component `i`:
-`a=1-nᵢ², b=-nᵢ·UnCross, c=-nᵢ²·dm, d=-nᵢ·UnCross·dm` (the mirror value
+Per class: `FixedValue(v)`: `a=0, b=v, c=-gDiff, d=v·gDiff` (`gDiff` is
+the geometric diffusion weighting `mesh.gDiff(face)`, $|E_f|/(|S_f|\cdot|d_{Pf}|)$);
+`FixedGradient(g)`: `a=1, b=g·dn, c=0, d=g`; `ZeroGradient` and the wall-function
+markers: `a=1, b=0, c=0, d=0`; `Symmetry` on velocity component `i`:
+`a=1-nᵢ², b=-nᵢ·UnCross, c=-nᵢ²·gDiff, d=-nᵢ·UnCross·gDiff` (the mirror value
 `Uf = UP - (UP·n)n` and its implicit normal-diffusion coupling), scalars
-zero-gradient. Hot loops read only these arrays and the trait flags — no
-per-face type dispatch or map lookups.
+resolved directly to `ZeroGradient`.
 
-**Trait queries** replace scattered type tests: `fixesValue()` (pressure
-anchor detection), `constrainsZeroFlux()` (Rhie-Chow flux zeroing at
-symmetry), `correctsBoundaryFlux()` (boundary p'-gradient flux correction),
-`isWallModelled()` (turbulence wall-function activation),
-`contributesToLimiterHull()` (Barth-Jespersen hull membership), and
-`pressureCorrectionCompanion()` (the p' BC implied by a p BC, enforced at
-load time).
+**Capability queries** are virtual methods directly on `BoundaryType`:
+`fixesValue()` (pressure anchor detection), `isSymmetry()` (symmetry plane
+handling and flux zeroing), `correctsBoundaryFlux()` (boundary p'-gradient flux
+correction), `isWallModelled()` (turbulence wall-function activation), and
+`isWall()` (wall identification for `NoSlip` and `WallFunction` patches).
 
-**Evaluation cadence**: `BoundaryConditions::updateCoeffs(Ux, Uy, Uz)` is
-called from the `Segregated` constructor, at the top of each momentum
-component's build in `solveMomentum` (so symmetry cross-terms see the
-just-solved previous component, Gauss-Seidel style), and at the top of
-`updateVelocityGradients` (which also covers PISO's explicit PRIME sweep via
-`assembleMomentum`). Only `Symmetry` on velocity reads `U`; the call is
-rank-local and boundary-only.
+**Evaluation cadence**: `BoundaryConditions::refresh(mesh, Ux, Uy, Uz)` is
+called from `MomentumTransport` at startup, at the top of each momentum solve
+(so symmetry cross-terms see the just-solved previous velocity components),
+and in `Segregated::correctVelocity()`. Only `Symmetry` on velocity overrides
+`refreshCoeffs()`; the call is rank-local and skips processor cut patches.
 
 **Key features**:
-1. **Direct Patch Lookup**: `Face::patch()` returns a `const BoundaryPatch*` linked at startup via `BoundaryConditions::linkFaces()`
-2. **Per-Component Velocity BCs**: velocity has no vector BC type: it is registered as three independent scalar BCs under `Field::Ux/Uy/Uz`; `BoundaryType::create()` picks the component from the case file's `U` vector
-3. **Registration**: `BCLoader` parses each `boundaryConditions` sub-section and calls `BoundaryType::create(typeName, field, patchSection)`; `setBoundaryType()` stores the object; `finalize()` seals the registry and builds the trait flag arrays; `symmetry` is mesh-derived (`PatchType::symmetry`) and never case-file selectable
-4. **Boundary Value Calculation**: `boundaryFaceValue()` resolves `a·φP + b` for any field: every field (`Ux`, `Uy`, `Uz`, `p`, `pCorr`, `k`, `omega`, `nut`) is scalar
+1. **Direct Patch Lookup**: `Face::patch()` returns a `const BoundaryPatch*`
+2. **Per-Component Velocity BCs**: velocity has no vector BC type: it is registered as three independent scalar BCs under `Field::Ux/Uy/Uz`; `BCLoader` extracts the component from the case file's `U` vector and passes it directly to `BoundaryTypeFactory::create()`
+3. **Factory Instantiation**: `BoundaryTypeFactory::create()` instantiates boundary conditions by type name and validates field compatibility
+4. **Boundary Reconstruction**: `BoundaryConditions::faceValue(face, ownerValue, field)` evaluates `a·φP + b` from the patch's `BoundaryCoeffs` slice, and `BoundaryConditions::refresh()` updates coupled boundary coefficients
+5. **Decoupled Consumers**: Core solver classes (`Matrix`, `GradientScheme`, `MomentumTransport`) never branch on boundary condition types
 
 **Error handling**:
-- A missing (patch, field) registration is a fatal error at first
-  evaluation (`boundaryFaceValue`, matrix assembly, or `boundaryType()`),
-  matching the historical `fieldBC()` behavior; there is no zero-gradient
-  fallback.
 - An unknown type token is a fatal error at load time, validated against
-  `BoundaryType::availableTypes(field)`.
+  `BoundaryTypeFactory::availableTypes(field)`.
 - Boundary faces must be linked to patches before solving; unlinked faces are
   fatal errors.
 
@@ -234,11 +245,11 @@ rank-local and boundary-only.
 
 `GradientScheme` is an **abstract base class**: it owns the scheme-independent
 services (`faceGradient`, `limitGradient`, `fieldGradient`, plus the private
-`averageFaceGradient`/`boundaryFaceGradient` helpers) and declares one pure
+`averageFaceGradient` helper) and declares one pure
 virtual operation, `cellGradient`. The base constructor is `protected` and the
-destructor is `virtual`; copy/move are deleted (it holds `const Mesh&` and
-`const BoundaryConditions&` references, now `protected` so derived overrides can
-read them). `fieldGradient` is a template method: it loops `cellGradient()`
+destructor is `virtual`; copy/move are deleted (it holds `private` `const Mesh&` and
+`const BoundaryConditions&` references exposed to derived classes via the
+`protected` accessors `mesh()` and `bcManager()`). `fieldGradient` is a template method: it loops `cellGradient()`
 (dispatched through the vtable) then applies `limitGradient()`, so it needs no
 changes when a new scheme is added.
 
@@ -368,7 +379,7 @@ struct TransientTerm
     const TimeScheme& scheme;            // d(phi)/dt discretization
     Scalar deltaT;                       // Time step size
     const ScalarField& phiPrevStep;      // Field at previous time step (phi^n)
-    const ScalarField* ddtPrevStep;      // Stored previous-step derivative (CN; nullptr otherwise)
+    const ScalarField* ddtPrevStep;      // Stored previous-step derivative/level (CN / BDF2; nullptr otherwise)
 };
 
 struct TransportEquation
@@ -391,13 +402,14 @@ struct TransportEquation
   - **Pressure correction**: face-based diffusion via `GammaFace` (DUf), no convection (`convection = nullopt`)
   - **Turbulence k/omega**: convection + precomputed face diffusion
 - Internal faces: assembles diffusion and convection with non-orthogonal correction
-- Boundary faces: handles fixedValue, zeroGradient, noSlip, and wall function types
-- Deferred-correction for CDS/SOU added to RHS
+- Boundary faces: consumes `BoundaryCoeffs` (`a`/`b`/`c`/`d`) uniformly across all BC types
+- Deferred-correction for CDS/SOU/LUST added to RHS
 - Transient term (when `eq.transient` is set): a per-cell pass adds the time
   scheme's `V/Δt`-based contribution to the diagonal and the corresponding
-  explicit source from `phi^n` (and, for Crank-Nicolson, the stored
-  previous-step derivative). The coefficients are kinematic (no `rho`); `steadyState` leaves
+  explicit source from `phi^n` (and, for `CrankNicolson` or `SecondOrderImplicit`,
+  the stored previous-step derivative/level). The coefficients are kinematic (no `rho`); `steadyState` leaves
   `eq.transient` empty so the loop is skipped.
+- `assemble()` commits the COO value buffer (`MatSetValuesCOO`) and RHS vector into the persistent PETSc `Mat` (`matrixA()`) and `Vec` (`rhsVec()`).
 
 ### Under-relaxation
 `relax(α, φ_prev)` performs Patankar-style implicit relaxation by scaling the diagonal and adjusting RHS with the previous state.
@@ -420,68 +432,62 @@ case` in parallel, with no case-file changes.
 Decomposition happens at runtime in `MeshCreator::create()`. The master rank
 reads the complete mesh, `MeshDecomposer` partitions it with METIS on the cell
 dual graph and extracts one `SubmeshData` block per rank, `MeshDistributor`
-ships the blocks, and `DecompositionChecker` collectively validates the result.
-Each rank then owns a submesh whose cell list is `[owned cells | ghost tail]`:
-solver and assembly cell loops run over `mesh.numOwnedCells()`, and the ghost
+ships the blocks, and `MeshCreator` validates global cell conservation.
+Each rank then owns a submesh whose cell list is `[domain cells | halo tail]`:
+solver and assembly cell loops run over `mesh.numDomainCells()`, and the halo
 cells beyond that bound are read-only copies of neighbor ranks' cells, refreshed
-by communication. Every inter-rank cut is a `ProcessorPatch`, and the faces on
-it carry `PatchType::processor` — so any patch loop that means "physical
-boundary" must skip `PatchType::processor` patches. `GlobalIndex` maps owned
-cells to the rank-major global numbering PETSc assembles against.
+by communication via `Halo::exchange({...})`. Every inter-rank cut is a `ProcessorPatch`
+managed by `namespace Halo`, and the faces on it carry `PatchType::processor` —
+so any patch loop that means "physical boundary" must skip `PatchType::processor` patches.
+`GlobalIndex` maps domain cells to the rank-major global numbering PETSc assembles against.
 
-Ghost values are updated by `exchangeHalos(mesh, {...})` from `HaloExchange.h`.
-The rule: after any write to owned-cell values that a face kernel or stencil
-later reads across a partition cut, `exchangeHalos` must run before that read.
+Halo values are updated by `Halo::exchange({...})`.
+The rule: after any write to domain-cell values that a face kernel or stencil
+later reads across a partition cut, `exchange` must run before that read.
 Because one call sends a single packed message per neighbor rank, fields
 produced together should be batched into ONE call rather than exchanged
-individually. Call sites in `Segregated.cpp`, `PISO.cpp`,
-`MomentumTransport.cpp`, `kOmegaSST.cpp` and `RANS.cpp` are the worked examples.
+individually. Call sites in `MomentumTransport.cpp`, `Segregated.cpp`, `PISO.cpp`,
+`PotentialFlow.cpp`, `TaylorGreen.cpp`, `TurbulenceModel.cpp`, `kOmegaSST.cpp`, and `LES.cpp`
+are the worked examples.
 
 The overriding correctness constraint is lockstep: every rank must reach every
 collective — reductions (`globalSum`/`globalMax`/`globalMin`/`globalOr`), halo
 exchanges, collective HDF5 writes, and collective constructors. Never guard a
 collective with a per-rank condition; a missing collective on one rank is a
 hang, not an error message. A missing or misplaced halo exchange fails silently
-instead, converging to a subtly wrong answer.
-
-`.claude/rules/parallel.md` and `docs/MULTI_GPU_DESIGN.md` § 2.5 are the
-authoritative contracts — § 2.5 lists exactly which fields are exchanged where
-in one outer iteration. The implementation lives in `src/Parallel/`.
+instead, converging to a subtly wrong answer. The implementation lives in
+`src/Parallel/`.
 
 
-## SIMPLE algorithm
+## Segregated pressure–velocity coupling (`SIMPLE` & `PISO`) and flow initialization
 
-Entry point: the shared driver `MomentumTransport::solve()` loops `SIMPLE::outerIteration()` until convergence or `maxIterations`:
-1) Store previous-iteration fields (U, face velocities, flow rates), compute gradP.
-2) `solveMomentum()`: computes velocity gradients once into the `gradU_` member, then loops the `Ux_`/`Uy_`/`Uz_` component equations the solver owns directly, each with `buildMatrix()` + Patankar relaxation + implicit solve.
-3) `updateRhieChowFlowRate()`: compute Rhie-Chow face mass fluxes.
-4) `solvePressureCorrection()`: pre-compute mass imbalance source, reset p' and grad(p') to zero, then build and solve the p' equation using `buildMatrix()` with face-based diffusion (DUf), no convection. `SIMPLE.nNonOrthogonalCorrectors` extra loop passes re-assemble with the explicit non-orthogonal correction from the latest grad(p') and re-solve (simpleFoam's non-orthogonal pressure corrector loop, where the first solve always carries a zero correction because p' restarts from zero).
-5) `correctVelocity()`: update U using `U = U* - D ∇p'`.
-6) `correctFlowRate()`: update face mass fluxes.
-7) `correctPressure()`: apply `p = p + α_p p'` (p' is reset at the next iteration's corrector-loop entry).
-8) `solveTurbulence()`: advance k–ω SST using current fields and velocity gradients `gradU_` (if enabled).
-9) `checkConvergence()`: monitor mass imbalance (normalized per-cell average), velocity residual (normalized L2), and pressure correction residual (normalized RMS).
+Entry point: the shared driver `MomentumTransport::solve()` snapshots `UxPrevIter_`/`UyPrevIter_`/`UzPrevIter_` and loops `outerIteration()` until convergence or the iteration cap (`maxIterations` for steady `SIMPLE`, `nOuterCorrectors` per time step for transient `PISO`).
 
-Controls:
-- `SIMPLE` is fully initialized by its constructor. Runtime controls (rho, mu,
-  initial fields, under-relaxation factors, tolerances, debug
-  flag) are passed as individual constructor parameters, OpenFOAM-style, with no
-  intermediate POD config struct. The two linear solvers (`momentum`,
-  `pressure`) are likewise passed as plain `LinearSolver&` parameters.
-- Turbulence is **not owned by `SIMPLE`**. `SolverModules` owns
-  `unique_ptr<TurbulenceModel>` as a sibling of the SIMPLE solver and
-  constructs it *before* SIMPLE (mirroring `simpleFoam`'s `createFields.H`
-  ordering). A non-owning `TurbulenceModel&` is passed as the final constructor
-  argument to `SIMPLE`; it is always valid: a `Laminar` null-object represents
-  the laminar path instead of `nullptr`.
-- `CaseConfig::loadConfiguration()` parses non-BC runtime input into
-  `CaseConfiguration`. `SolverSetup::configure()` owns selected linear
-  solvers, gradient and convection schemes, the turbulence model
-  (`kOmegaSST` or `Laminar`), and the time scheme (`TimeScheme::create`)
-  through `SolverModules`, then constructs `SIMPLE` last so it is destroyed
-  first.
+In `SIMPLE::outerIteration()`:
+1) `solveMomentum()`: stores previous-iteration face velocities and mass fluxes, computes `gradP_` and exchanges `gradP_` halos, updates `nuEffFace_` (`updateEffectiveViscosity()`), refreshes velocity gradients (`gradUx_`, `gradUy_`, `gradUz_`) and adds the explicit $\nabla \cdot (\nu_{\text{eff}} (\nabla \mathbf{U})^T)$ source (`assembleMomentum()`), then loops the `Ux_`/`Uy_`/`Uz_` component equations (`buildMatrix` + Patankar `relax` + `diagonalDU` + `assemble` + `momentumSolver_.solve` + `Halo::exchange` + `buildFaceDiagonal`).
+2) `updateRhieChowFlowRate()`: computes Rhie–Chow face mass fluxes.
+3) `solvePressureCorrection()`: pre-computes mass imbalance source, resets `pCorr_` and `gradPCorr_` to zero, attaches a PETSc constant null space (`MatNullSpaceCreate` + `MatSetNullSpace`) when no pressure BC fixes a value on any rank (`pCorrNeedsNullSpace_`), and runs `1 + nNonOrthogonalCorrectors` passes: each pass builds and solves the $p'$ equation using `buildMatrix()` with face-based diffusion (`DUf_`), no convection, then exchanges `pCorr_` halos, recomputes `gradPCorr_`, and exchanges `gradPCorr_` halos (simpleFoam's non-orthogonal pressure corrector loop, where the first solve always carries a zero correction because $p'$ restarts from zero). Detaches the null space afterward.
+4) `correctVelocity()`: updates $\mathbf{U} = \mathbf{U}^* - \mathbf{D} \nabla p'$, exchanges velocity halos, and refreshes velocity BCs.
+5) `correctFlowRate()`: updates face mass fluxes with the pressure-correction gradient.
+6) `correctPressure()`: records the pressure-correction RMS (`lastPressureCorrectionRMS_`), applies $p = p + \alpha_p p'$, and exchanges `p_` halos.
+7) `solveTurbulence()`: refreshes velocity gradients and advances `turbulence_.solve(...)` (two-equation `kOmegaSST`, algebraic `Smagorinsky`/`WALE` SGS update, or `Laminar` no-op).
+8) `checkConvergence()`: monitors mass imbalance (normalized per-cell average), velocity residual (normalized L2), and pressure-correction residual (normalized RMS) — scaled by first-iteration values in steady runs, unscaled dimensionless residuals in transient runs.
 
-### Transient (URANS) solve
+In `PISO::outerIteration()`, one full predictor-corrector pass (steps 1–6 above) is followed by `nPrimeCorrectors` explicit PRIME corrector passes: each corrector recomputes and exchanges `gradP_`, calls `solveMomentumExplicit(prevStep)` (re-assembles momentum with the updated face flux, builds the `Ux`/`Uy`/`Uz` matrices, refreshes `DU_`, advances velocity via a single explicit Jacobi sweep `explicitJacobiUpdate()`, swaps `U` with `UStar_`, exchanges velocity halos, and refreshes `DUf_`), and then runs steps 2–6 (`updateRhieChowFlowRate`, `solvePressureCorrection`, `correctVelocity`, `correctFlowRate`, `correctPressure`), followed by `solveTurbulence()` and `checkConvergence()`.
+
+### Flow initialization (`src/Solver/Initialization/`)
+
+Initial velocity and pressure fields are populated inside `MomentumTransport`'s constructor via a polymorphic `Initializer` (`Initializer::create` in `src/Solver/Initialization/Initializer.cpp`), selected by `initialConditions.type`:
+- `Uniform` (`Uniform.h/.cpp`): fills domain and halo cells with uniform `U` and `p` values from the case file.
+- `TaylorGreen` (`TaylorGreen.h/.cpp`): evaluates the analytical 3D Taylor–Green vortex velocity and pressure at cell centroids and exchanges halos.
+- `PotentialFlow` (`PotentialFlow.h/.cpp`): initializes freestream velocity $\mathbf{U}_\infty$, solves the potential-flow Poisson projection $\nabla^2 \phi = \nabla \cdot \mathbf{U}_\infty$ for `1 + nNonOrthogonalCorrectors` passes using the pressure `LinearSolver`, projects a divergence-free wall-tangent velocity $\mathbf{U} = \mathbf{U}_\infty - \nabla \phi$, sets Bernoulli pressure $p = p_\infty + \frac{1}{2}\rho(U_\infty^2 - |\mathbf{U}|^2)$, and exchanges halos.
+
+Controls and setup:
+- `SIMPLE` and `PISO` are fully initialized by their constructors through `MomentumTransport::create(...)`. Runtime controls (rho, mu, under-relaxation factors, tolerances, time-step controls, debug flag), the `Initializer&`, and the two linear solvers (`momentum`, `pressure`) are passed directly as constructor parameters.
+- Turbulence is **not owned by `MomentumTransport`**. `SolverModules` owns `unique_ptr<TurbulenceModel>` as a sibling of `solver` and constructs it *before* the flow solver. A non-owning `TurbulenceModel&` is passed as the final constructor argument to `MomentumTransport::create()`; it is always valid (`Laminar` null-object for laminar runs).
+- `CaseConfig::loadConfiguration()` parses non-BC runtime input into `CaseConfiguration`. `SolverSetup::configure()` constructs the gradient and convection schemes, the time scheme (`TimeScheme::create`), inserts optional `petscOptions` into the PETSc options database, constructs the linear solvers (`momentumSolver`, `pressureSolver`, and for RANS `kSolver`/`omegaSolver`), constructs the turbulence model (`TurbulenceModel::create` for `kOmegaSST`, `LES::create` for `Smagorinsky`/`WALE`, or `Laminar`), constructs a local flow `Initializer` (`Initializer::create`), and finally constructs `modules.solver` (`MomentumTransport::create`) last so it is destroyed first.
+
+### Transient (URANS / LES) solve
 
 `MomentumTransport` (the abstract base of `SIMPLE`/`PISO`) holds a
 `const TimeScheme&` plus the time-step controls (`deltaT_`, `nOuterCorrectors_`).
@@ -514,13 +520,16 @@ which `CFDApplication::run()` uses to branch between two private paths:
    reaches per-step convergence (drop the tolerance to force more iterations).
    Per-iteration residual lines are emitted only in debug mode, so a non-debug
    run prints one summary line per time step.
-3. Rolls the Crank-Nicolson stored previous-step derivatives forward
-   (`updatePrevStepDerivatives()` for momentum and `turbulence_`).
+3. Rolls the `CrankNicolson` or `SecondOrderImplicit` stored previous-step
+   derivatives/levels forward (`updatePrevStepDerivatives()` for momentum and
+   `turbulence_`).
 
 Each momentum, k, and omega `TransportEquation` carries a `TransientTerm` on the
 transient path; the pressure-correction equation never does. `RANS` mirrors the
 previous-step bookkeeping (`kPrevStep`/`kDdtPrevStep`) so URANS turbulence
-transport is consistent with the momentum time scheme.
+transport is consistent with the momentum time scheme, while `LES` models
+(`Smagorinsky`, `WALE`) evaluate algebraic sub-grid viscosity directly from the
+current velocity gradient tensor each outer iteration.
 
 
 ## Rhie–Chow face-velocity interpolation
@@ -532,10 +541,13 @@ Used in `updateRhieChowFlowRate()` to prevent pressure checkerboarding:
   `F_f = U_f_lin·S_f - D_f(∇p_f - ∇p_f_lin)·S_f`.
 - Add previous-iteration face under-relaxation as
   `(1-α_U)(F_f_prev - U_f_prev·S_f)`.
+- On the transient path (`prevStep != nullptr`), add the previous-time-step flux
+  consistency term `DT_f(F_f_prevStep - U_f_prevStep_lin·S_f)` from the active
+  `TimeScheme`.
 - Boundary faces use centralized BC evaluation.
 
 
-## Turbulence models (TurbulenceModel / RANS / kOmegaSST / Laminar)
+## Turbulence models (TurbulenceModel / RANS / kOmegaSST / LES / Smagorinsky / WALE / Laminar)
 
 Turbulence models implement the storage-free `TurbulenceModel` interface
 (`src/Models/Turbulence/TurbulenceModel.h`). The root type exposes only
@@ -555,27 +567,28 @@ through the same interface.
 
 `RANS` (`RANS/RANS.{h,cpp}`) is the shared two-equation eddy-viscosity layer. It
 owns `nu`, `nut`, `k`, k/dissipation residual bookkeeping, wall distance,
-wall-function geometry/diagnostics (`nutWall`, `yPlus`), and common helpers
-such as `velocityDivergence()`, strain-rate magnitude computation, on-demand
-wall-shear evaluation, and the turbulent-kinetic-energy inlet estimate.
+wall-function geometry/diagnostics (`nutWall`, `yPlus`), the `Matrix` assembler
+(`matrixConstruct_`), and common helpers such as `velocityDivergence()`,
+strain-rate magnitude computation, on-demand wall-shear evaluation, and the
+turbulent-kinetic-energy inlet estimate. It borrows the mesh, boundary
+conditions, time scheme, gradient scheme, per-equation convection schemes, and
+the `k` and dissipation (`omega`) linear solvers (all bound at construction).
 
 Class `kOmegaSST` (`RANS/kOmegaSST.{h,cpp}`):
 - Is fully initialized by its constructor from inlined parameters (laminar
   viscosity, initial k/omega, under-relaxation factors, debug flag), with no
   config-struct indirection.
-- Owned by `SolverModules` as a sibling of `SIMPLE`; never owned by `SIMPLE`
-  itself. SIMPLE holds a non-owning, non-const `TurbulenceModel&` (a `Laminar`
-  null-object replaces the former `nullptr` for laminar runs, so the reference
-  is always valid; the reference, not a pointer, encodes that invariant).
+- Owned by `SolverModules` as a sibling of `SIMPLE`/`PISO`; never owned by the
+  flow solver itself. `MomentumTransport` holds a non-owning, non-const
+  `TurbulenceModel&` (a `Laminar` null-object replaces the former `nullptr` for
+  laminar runs, so the reference is always valid; the reference, not a pointer,
+  encodes that invariant).
 - Inherits common RANS state and owns only SST-specific persistent state such
-  as `ω`, its previous-iteration snapshot, SST constants/options, and dynamic
-  omega wall-function values.
-- Borrows mesh, boundary conditions, gradient scheme, per-equation
-  convection schemes, and the `k`/`omega` linear solvers (all bound at
-  construction). It does not own any of them.
+  as `ω`, its previous-iteration/previous-step snapshots, SST constants/options,
+  and dynamic omega wall-function values.
 - `solve(Ux, Uy, Uz, flowRateFace, gradU)` accepts pre-computed velocity
-  gradients from `SIMPLE`; the linear solvers were captured by reference in
-  the constructor and are not passed per call.
+  gradients from `MomentumTransport`; the linear solvers were captured by
+  reference in the `RANS` constructor and are not passed per call.
 - Solves ω and k transport with variable diffusion (`ν + σ·ν_t`), production/destruction, and cross-diffusion for SST.
 - Calculates blending functions `F1`/`F2`/`F23`, turbulent viscosity
   `ν_t = a1 k / max(a1 ω, F23 ||S||)`, and applies wall corrections. These
@@ -589,6 +602,34 @@ Class `kOmegaSST` (`RANS/kOmegaSST.{h,cpp}`):
   returning the RANS wall-function shear field for the current model state and
   velocity fields. The returned value is kinematic `tau/rho` on boundary
   faces.
+
+`LES` (`LES/LES.{h,cpp}`) is the shared sub-grid scale (SGS) base layer for
+scale-resolving simulations. It owns `nu`, `nut`, `kSgs` (`k_sgs`), the cell
+filter width `delta = V^(1/3)`, wall distance (computed via `meshWave` with
+convergence tracked in `wallDistanceConverged_`), and the MPI halo-exchange
+contract (`Halo::exchange({&nut_, &kSgs_})`) after each SGS update. It exports
+`nut`, `k_sgs`, and `delta` through `cellDataOutputs()` and evaluates wall
+shear stress from the effective viscosity `nu + nut`.
+
+Class `Smagorinsky` (`LES/Smagorinsky.{h,cpp}`):
+- Implements the classical algebraic eddy-viscosity SGS model
+  `nut = (Cs * delta_eff)^2 * |S|` and Yoshizawa equilibrium sub-grid kinetic
+  energy `k_sgs = Ck * delta_eff^2 * |S|^2`, where `|S| = sqrt(2 * S_ij * S_ij)`
+  is evaluated via `LES::strainRateMagnitude()`.
+- Owns its default constants in `Smagorinsky::ModelConstants coeffs_` (`Cs = 0.165`,
+  `Ck = 0.094`, `Aplus = 26.0`, `kappa = 0.41`) and supports optional Van Driest
+  near-wall damping `delta_eff = min(delta, (kappa / Cs) * y * (1 - exp(-y+ / A+)))`.
+
+Class `WALE` (`LES/WALE.{h,cpp}`):
+- Implements the Wall-Adapting Local Eddy-viscosity (Nicoud & Ducros, 1999)
+  algebraic SGS model
+  `nut = (Cw * delta)^2 * (Sd : Sd)^(3/2) / ((S : S)^(5/2) + (Sd : Sd)^(5/4))`
+  from the traceless symmetric part `Sd` of the squared velocity gradient
+  tensor `dot(gradU, gradU)`, and sub-grid kinetic energy
+  `k_sgs = (nut / (Ck * delta))^2`.
+- Owns its default constants in `WALE::ModelConstants coeffs_` (`Cw = 0.325`,
+  `Ck = 0.094`) and requires no wall-damping function because `Sd : Sd`
+  naturally recovers `nut ~ y^3` at walls and vanishes in pure shear.
 
 
 ## Post-processing and VTKHDF export
@@ -648,7 +689,7 @@ under a second on 6.1 vs 10+ minutes on 9.5.2). Three pairs under
   arrays are cheap to repeat). `patchIdx` is the zero-based ordinal in
   `mesh.patches()` order; `patchZoneIdx` is the Fluent zone ID.
 - Adds `wallShearStress` for all runs, reduced from global face indexing to
-  boundary-face order. Adds `yPlus` only when turbulence is enabled.
+  boundary-face order. Adds `yPlus` for RANS runs (`kOmegaSST`).
 
 `PostProcess::appendTimeStep(volumeWriter, boundaryWriter, time, solver,
 turbulence)` gathers the field maps (pressure, `velocityMagnitude`, vector
@@ -692,12 +733,16 @@ for the lifetime of the time loop:
 
 `LinearSolver` is an abstract base class for sparse iterative solvers.
 The single concrete `PetscLinearSolver` owns one PETSc `KSP` configured at
-construction; there are no separate `BiCGSTAB`/`PCG` classes. `create()`
-maps the selectable name string to a KSP type: `"BiCGSTAB"` to `KSPBCGS`
-for non-symmetric momentum/turbulence systems and `"PCG"` to `KSPCG` for
-the symmetric positive definite pressure-correction system:
+construction; there are no separate per-algorithm classes. `LinearSolver::create()`
+maps the selectable solver name (`availableSolvers()`: `BiCGSTAB`, `PCG`, `GMRES`,
+`FGMRES`, `TFQMR`, `CGS`, `MINRES`, `Richardson`, `Chebyshev`, `PreOnly`) to a
+PETSc `KSPType`, the preconditioner name (`availablePreconditioners()`: `Jacobi`,
+`None`, `ILU`, `ICC`, `SOR`/`GaussSeidel`, `AMG`/`GAMG`, `BlockJacobi`, `ASM`,
+`LU`, `Cholesky`) to a PETSc `PCType`, and binds a per-equation `optionsPrefix`
+(`momentum_`, `pressure_`, `k_`, `omega_`) so `KSPSetFromOptions()` can consume
+scoped entries from `linearSolvers.petscOptions`:
 - Per-field solver instances with independent convergence parameters.
-- Configurable relative residual tolerance and max iterations.
+- Configurable relative residual tolerance (`KSPSetNormType(KSP_NORM_UNPRECONDITIONED)`) and max iterations.
 - `solve(x, A, b)` updates the supplied solution vector in place and caches
   diagnostics in `lastPerformance()` (iterations + final residual).
 - A non-finite solution (detected across all ranks via `globalOr`) emits a
@@ -742,15 +787,16 @@ GradientScheme& operator=(GradientScheme&&) = delete;
 virtual ~GradientScheme() noexcept = default;
 ```
 
-Used by: `GradientScheme` (abstract base; `LeastSquares` derives from it),
-`Matrix`, `kOmegaSST`, `SIMPLE`. Note the destructor is `virtual` only for
-the polymorphic `GradientScheme`; the non-polymorphic borrowers keep a
-non-virtual `= default` destructor.
+Used by: polymorphic bases and derived classes (`GradientScheme` / `LeastSquares`,
+`MomentumTransport` / `Segregated` / `SIMPLE` / `PISO`, `RANS` / `kOmegaSST`,
+`LES` / `Smagorinsky` / `WALE`, whose destructors are `virtual` or `override`) as
+well as non-polymorphic borrowers such as `Matrix` and `MeshDecomposer` (which
+keep a non-virtual `= default` destructor).
 
 ### Pattern 2: Runtime-owned polymorphic services
 
 Polymorphic runtime services are owned through `std::unique_ptr`.
-`SolverModules` deletes copy and move because `SIMPLE` stores references into
+`SolverModules` deletes copy and move because `solver` stores references into
 these services; keeping runtime ownership stationary avoids dangling references.
 
 ```cpp
@@ -791,7 +837,7 @@ Classes with only value or standard-library members (e.g. `std::vector`, `Name`,
 `Scalar`) that are fully copyable and movable by the compiler.
 Declare nothing; the compiler generates correct defaults.
 
-Used by: `Face`, `Cell`, `BoundaryPatch`, `CellData<T>`, `FaceData<T>`.
+Used by: `Face`, `Cell`, `BoundaryPatch`, `BoundaryCoeffs`, `CellData<T>`, `FaceData<T>`.
 
 ### Runtime ownership boundaries
 
@@ -804,33 +850,43 @@ kept asymmetric by design: `BCLoader` streams the raw
 the data is patch-indexed and field-specific.
 
 `SolverModules` owns user-selected runtime services:
-`GradientScheme`, the default and per-equation `ConvectionScheme`, one
-`LinearSolver` instance per solved equation, and a `TurbulenceModel`
-(`kOmegaSST` or `Laminar`). `solver` is declared last so it is destroyed before
-the services and model whose references are stored by `SIMPLE`.
+`GradientScheme`, the default and per-equation `ConvectionScheme`,
+`TimeScheme`, one `LinearSolver` instance per solved equation (`momentumSolver`,
+`pressureSolver`, and for RANS `kSolver` / `omegaSolver`), and a `TurbulenceModel`
+(`kOmegaSST`, `Smagorinsky`, `WALE`, or `Laminar`). `solver` (`MomentumTransport`:
+`SIMPLE` or `PISO`) is declared last so it is destroyed before the services and
+model whose references it stores.
 
-`SIMPLE` owns the flow solution fields, pressure-correction state,
-Rhie-Chow fields, and matrix assembler. It borrows a non-null
-`TurbulenceModel&` for the non-const turbulence solve step; it does not own the
-model, parse case input, or own linear solver objects.
+`MomentumTransport` owns the flow solution fields (`Ux_`, `Uy_`, `Uz_`, `p_`),
+velocity and pressure gradients (`gradUx_`, `gradUy_`, `gradUz_`, `gradP_`),
+effective viscosity (`nuEffFace_`), Rhie–Chow face fluxes, and the momentum
+diagonal (`DU_`, `DUf_`). `Segregated` adds the pressure-correction fields
+(`pCorr_`, `gradPCorr_`), momentum sources, and the `Matrix` assembler
+(`matrixConstruct_`), while `PISO` adds the `UxStar_`/`UyStar_`/`UzStar_`
+corrector scratch fields. `MomentumTransport` borrows a non-null `TurbulenceModel&`
+for the non-const turbulence solve step; it does not own the model, parse case
+input, or own linear solver objects.
 
-`RANS` owns shared turbulence fields and wall-function state. `kOmegaSST`
-adds SST-specific persistent state and borrows mesh, boundary conditions,
-numerical schemes, and the `k`/`omega` linear solvers (all bound at
-construction).
+`RANS` owns shared two-equation turbulence fields (`k_`, `nut_`), wall distance,
+wall-function state, and the `Matrix` assembler (`matrixConstruct_`), while
+borrowing the mesh, boundary conditions, numerical schemes, and the `k`/`omega`
+linear solvers (all bound at construction). `kOmegaSST` adds SST-specific
+persistent state (`omega_`, omega wall-function overrides, model constants). `LES`
+owns shared SGS fields (`nut_`, `kSgs_`, `delta_`, `wallDistance_`), with
+`Smagorinsky` and `WALE` owning their respective model constants.
 
 
 ## Extending the codebase (recipes)
 
 ### Add a new scalar transport equation
 1) Add a `Field` enumerator for the new field in `src/Fields/Field.h` (lowercase for scalar fields, matching `p`/`k`/`omega`) and a matching `case` in `fieldToString()` (`Field.cpp`).
-2) Create the field in your driver: `ScalarField phi(initialValue);` (cell count comes from `Mesh::cellCount()`; use `ScalarField phi;` for zero-init).
-3) Build an effective face diffusion field `GammaFace` and a source
-   `phi_source` per cell. If starting from cell-centered coefficients, use
+2) Create the field in your driver: `ScalarField phi(mesh, initialValue);` (sized from `mesh.numCells()`; use `ScalarField phi(mesh);` for zero-init).
+3) Build an effective face diffusion field `GammaFace` (`FaceFluxField(mesh)`) and a source
+   `source` (`ScalarField(mesh)`) per cell. If starting from cell-centered coefficients, use
    owner-cell values on boundary faces and `interpolateToFace()` on internal
    faces.
 4) Pre-compute the limited cell-gradient field `gradPhi` via
-   `GradientScheme::fieldGradient()`.
+   `gradScheme.fieldGradient(Field::myField, phi, gradPhi)`.
 5) Create a `TransportEquation` struct with all required fields:
    ```cpp
    TransportEquation eq
@@ -844,13 +900,18 @@ construction).
        .gradScheme = gradScheme
    };
    ```
-6) Call `matrix.buildMatrix(eq)`, then solve through a configured
-   `LinearSolver` instance.
-7) Apply under-relaxation via `matrix.relax(alpha, phiPrev)` if needed.
+6) Build, relax (if needed), assemble, solve, and exchange MPI halos:
+   ```cpp
+   matrix.buildMatrix(eq);
+   matrix.relax(alpha, phiPrev);
+   matrix.assemble();
+   solver.solve({phi.data(), mesh.numDomainCells()}, matrix.matrixA(), matrix.rhsVec());
+   Halo::exchange({&phi});
+   ```
 
 ### Add a new convection scheme
 1) Derive from `ConvectionScheme` and override the pure-virtual `correction()` (the explicit high-order deferred-correction term); the stable first-order upwind coefficients are applied by `Matrix`.
-2) Optionally add high-order face value and correction methods (see CDS/SOU) and integrate as deferred-correction in `Matrix`.
+2) Optionally add high-order face value and correction methods (see CDS/SOU/LUST) and integrate as deferred-correction in `Matrix`.
 3) Add the case-file name to `ConvectionScheme::availableSchemes()` and a
    matching `if (schemeName == "...")` branch to `ConvectionScheme::create()`
    (both in `src/Schemes/ConvectionSchemes/ConvectionScheme.cpp`), then
@@ -875,26 +936,29 @@ construction).
 
 ### Add a new boundary condition
 1) Create `src/BoundaryConditions/BoundaryTypes/MyType.h/.cpp` with
-   `class MyType final : public BoundaryType`. The constructor takes `Field`
-   plus the type's own parameters — there is no shared payload struct.
-2) Implement `typeName()`, `write()`, and `updateCoeffs()` writing the
-   value channel `a`/`b` and gradient channel `c`/`d` for every face of the
-   patch slice (see the coefficient contract above; e.g. a Robin blend
-   `f·φ + (1-f)·∂φ/∂n` is `a = 1-f, b = f·v + (1-f)·g·dn, c = -f·dm,
-   d = f·v·dm + (1-f)·g`).
-3) Override traits only where warranted: `fixesValue()` for
-   Dirichlet-dominant types (wires the pressure-anchor check
-   automatically), `correctsBoundaryFlux()` for flux-corrected pressure
-   types, and `pressureCorrectionCompanion()` if the type is selectable on
-   `p` (skipping it fails loudly at load time).
-4) Add one `if (typeName == "...")` branch to `BoundaryType::create()` that
-   parses the type's parameters from the patch section, and the token to
-   `BoundaryType::availableTypes(field)` for each permitted field.
-5) Add the `.cpp` to `CMakeLists.txt` and document the type in
-   `docs/CASE.md`.
+   `class MyType final : public BoundaryType`. The constructor takes the type's
+   own parameters (only `Symmetry` takes `Field` to distinguish velocity
+   components from scalars) — there is no shared payload struct.
+2) Implement `typeName()` and `updateCoeffs(const Mesh& mesh, const BoundaryPatch& patch)`,
+   allocating `coeffs_ = BoundaryCoeffs(patch.numFaces())` and writing the
+   value channel `a`/`b` and gradient channel `c`/`d` for every patch-local face
+   `localIdx` (see the coefficient contract above; e.g. a Robin blend
+   `f·φ + (1-f)·∂φ/∂n` is `a = 1-f, b = f·v + (1-f)·g·dn, c = -f·gDiff,
+   d = f·v·gDiff + (1-f)·g`). Override `refreshCoeffs()` only if the coefficients
+   depend on evolving velocity components during the solve (as `Symmetry` does).
+3) Override virtual capability queries in `MyType.h` if warranted: `fixesValue()`
+   for Dirichlet-dominant types (wires the pressure-anchor check automatically),
+   `isSymmetry()` for mirror-plane conditions, `correctsBoundaryFlux()` for
+   flux-corrected pressure types, `isWallModelled()` for turbulence wall models,
+   or `isWall()` for physical wall patches.
+4) Add the type token to `BoundaryTypeFactory::availableTypes(field)` and
+   add a construction branch to `BoundaryTypeFactory::create()` in
+   `src/BoundaryConditions/BoundaryTypeFactory.cpp`.
+5) Add the `.cpp` to `turblyze_core` in `CMakeLists.txt` and document the type
+   in `docs/CASE.md`.
 
 Nothing else: `Matrix`, the gradient schemes, `Segregated`, the turbulence
-models, and `Forces` consume only the coefficient arrays and trait flags,
+models, and `Forces` consume only the coefficient arrays and capability flags,
 so no file outside `src/BoundaryConditions/` changes.
 
 ### Add a new velocity-coupling algorithm
@@ -921,42 +985,46 @@ so no file outside `src/BoundaryConditions/` changes.
 - Add the case entry to `defaultCase` and document it in `docs/CASE.md`.
 - Parse and validate the value in `CaseConfig::loadConfiguration()` and add a field
   to `CaseConfiguration`.
-- Add a new parameter to the `SIMPLE` or `kOmegaSST` constructor (each
-  parameter on its own line per `docs/STYLE.md`), forward it from
-  `SolverSetup::configure()`, and store it as a member.
-- Keep user-selected services such as linear solvers, gradient schemes, and
-  convection schemes owned by `SolverModules`; pass non-owning references to
-  `SIMPLE` or to model solve calls.
+- Add a new parameter to the `MomentumTransport`/`SIMPLE`/`PISO` or turbulence
+  model constructor (each parameter on its own line per `docs/STYLE.md`), forward
+  it from `SolverSetup::configure()`, and store it as a member.
+- Keep user-selected services such as linear solvers, gradient schemes,
+  convection schemes, and time schemes owned by `SolverModules`; pass non-owning
+  references to `MomentumTransport::create()` or to model constructors.
 
 
 ## Testing and Debugging
 
-### Current validation workflow
+### Automated test suite and validation workflow
 
-There is no committed CTest/unit-test target. For code changes, validate with
-a successful build and a representative case run. For numerics or solver
-behavior changes, compare against the committed V&V studies: the OpenFOAM
-code-to-code comparison under `verification/` and the Morrison drag-curve
-study under `validation/` (each has a `runGuide.md` with reproduction steps).
+The repository includes a Catch2 v3 + CTest suite under `tests/` (enabled by default via `BUILD_TESTING=ON`):
+```bash
+ctest --test-dir build.nosync --output-on-failure          # All tests
+ctest --test-dir build.nosync -LE regression               # Fast serial + MPI + death tests
+ctest --test-dir build.nosync -L mpi --output-on-failure   # MPI parallel parity tests (np = 1, 2, 4)
+```
+- **`turblyze_unit_tests`** (`serial`): serial unit tests for `Vector`, `Tensor`, `Cramer3x3`/`Cramer4x4`, `CaseReader` and runtime selection (`RuntimeSelectionTests`), `CellData`/`FaceData`, mesh geometry (`Face`, `Cell`), boundary-condition linearizations (`BoundaryTypesTests`), factory (`BoundaryFactoryTests`), and `BCLoader`, `LeastSquares` gradients and the Barth-Jespersen limiter, interpolation and convection schemes (`Upwind`, `CentralDifference`, `SecondOrderUpwind`, `LUST`), time schemes (`SteadyState`, `ImplicitEuler`, `CrankNicolson`, `SecondOrderImplicit`), turbulence inlet calculators (`TurbulenceStaticsTests`) and `LES` (`Smagorinsky`, `WALE`) models (`LESModelTests`), `Uniform` flow initialization (`InitializationTests`), and serial `Comm`/`Reduce`/`GlobalIndex` identity paths.
+- **`turblyze_mpi_tests`** (`mpi`, run at `np = 1, 2, 4`): parallel METIS partitioning, halo exchange (`HaloExchangeTests`), global reductions (`ReduceParallelTests`), global indexing, parallel least-squares gradients (`GradientParallelTests`), parallel `Matrix` assembly/relaxation/constraint/explicit Jacobi update (`MatrixTests`), PETSc linear solvers across `PCG`/`BiCGSTAB`/`GMRES` and multiple preconditioners (`LinearSolverTests`), standalone `kOmegaSST` and `LES` (`Smagorinsky`, `WALE`) behavior and solves (`TurbulenceBehaviorTests`), and parallel flow initialization (`Uniform`, `TaylorGreen`, `PotentialFlow` in `InitializationParallelTests`).
+- **`turblyze_abort_probe`** (`death`): verifies that invalid configurations and malformed inputs trigger `FatalError` with the expected diagnostic message.
+- **`turblyze_regression_sphere`** (`regression`): end-to-end sphere benchmark regression check.
+
+For numerics or solver-behavior changes, also compare against the committed V&V studies: the OpenFOAM code-to-code comparison under `verification/` and the experimental/DNS benchmarks under `validation/` (`sphere/`, `cylinder/`, `AhmedBody/`, `LES/TaylorGreen/`).
 
 #### Boundary Conditions Checks
-Use `BoundaryConditions::printSummary()` in debug mode and focused temporary
-checks to verify:
+Use `BoundaryConditions::printSummary()` in debug mode and unit tests in `tests/unit/BoundaryConditions/BoundaryTypesTests.cpp` and `tests/unit/Case/BoundaryFactoryTests.cpp` to verify:
 1. **Patch Registration**: patch names, zones, and face ranges from `MeshReader`
-2. **BC Storage**: each type prints its own parameters via `BoundaryType::write()`
-3. **Field Lookup**: `boundaryType()` with `Field::{Ux, Uy, Uz, p, pCorr, k, omega, nut}`
-4. **Per-Component Velocity**: `BCLoader` registers `Ux`/`Uy`/`Uz`
-   independently for case-file `U`
-5. **Boundary Values**: `boundaryFaceValue()` for supported scalar BC types
-6. **Patch Linking**: boundary `Face::patch()` is non-null after `linkFaces()`
+2. **Coeff Computation**: each `BoundaryType` populates its patch-local `BoundaryCoeffs` (`a`, `b`, `c`, `d`) via `updateCoeffs(mesh, patch)`
+3. **Field Lookup**: `boundaryType(patchName, field)` and `find(patchName, field)` with `Field::{Ux, Uy, Uz, p, pCorr, k, omega, nut}`
+4. **Per-Component Velocity**: `BCLoader` registers `Ux`/`Uy`/`Uz` independently for case-file `U`
+5. **Boundary Values**: `faceValue(face, ownerValue, field)` for supported BC types and `refresh(mesh, Ux, Uy, Uz)` for coupled `Symmetry` velocity BCs
+6. **Patch Linking**: boundary `Face::patch()` is non-null after `MeshCreator::linkBoundaryFaces(faces, patches)`
 
 **Focused checks**:
 ```cpp
-// Patch names stay strings; fields use the Field enum.
-setFixedValue("inlet", Field::Ux, 1.0);   // velocity is per component
-setZeroGradient("outlet", Field::p);
-setNoSlip("wall", Field::Ux);
-setFixedGradient("inlet", Field::k, 100.0);
+// Instantiate via BoundaryTypeFactory and evaluate patch-local or manager face values:
+auto bc = BoundaryTypeFactory::create("fixedValue", Field::Ux, S(1.0));
+bc->updateCoeffs(mesh, patch);
+const Scalar uf = bc->faceValue(localIdx, ownerUx);
 ```
 
 #### Convection Scheme Checks
@@ -978,10 +1046,10 @@ Verify mathematical correctness:
 1. **Neighbor Validation**: Check distance calculations and weighting
 2. **Matrix Precompute**: Verify cached `invATA_` behavior for regular and
    degenerate stencils
-3. **Solver Robustness**: Check Cramer3x3 determinant and degeneracy handling
+3. **Solver Robustness**: Check `Cramer3x3` (`solve3x3`) determinant and degeneracy handling
 4. **Gradient Limiting**: Verify limiter activation in high-gradient regions
 5. **Face Interpolation**: Test averaging weights and corrections
-6. **Boundary Gradients**: Verify normal/tangential decomposition
+6. **Boundary Gradients**: Verify boundary face values feed into the least-squares stencil
 
 **Matrix checks**:
 ```cpp
@@ -1005,7 +1073,7 @@ loop. Helpers available:
   iteration block with `===`/`---` rules.
 - `Logger::residualTableHeader()` / `Logger::residualRow(equation, solver,
   iters, lsResidual)`: column-aligned residual table. The equation label
-  is supplied by the caller (e.g. `SIMPLE` passes `"Ux"`/`"Uy"`/`"Uz"`/
+  is supplied by the caller (e.g. `Segregated` passes `"Ux"`/`"Uy"`/`"Uz"`/
   `"p'"`; `kOmegaSST` passes `"k"`/`"omega"`), using the `SolvePerformance`
   cached by `LinearSolver::solve()`.
 - `Logger::subsection(title)` + `Logger::scalarStat(name, min, max, mean)`:
@@ -1014,11 +1082,10 @@ loop. Helpers available:
   block.
 
 All helpers are stateless; callers guard each call with their own
-`debug_` flag. Each helper early-returns on `!Comm::master()`, then builds
-its text in a local `std::ostringstream` and writes it in one go — sticky
-manipulators (`scientific`, `setprecision`, `left`, `right`) expire with the
-local stream, so they cannot leak into unrelated output. Use that same
-local-buffer pattern wherever you manipulate stream flags directly.
+`debug_` flag. Each helper formats its text via `std::format` and writes it in
+one go. Format specifiers are scoped locally to each replacement field
+(`{:.6e}`, `{:<12}`), eliminating sticky stream state leaks into unrelated
+output.
 
 **Ad-hoc method tracing** (one-off debugging during development of a new
 algorithm or while diagnosing an incident): plain `std::cout` is fine.
@@ -1047,7 +1114,7 @@ Strip it before committing if it isn't gated by a persistent flag.
 - **Symptom**: degenerate least-squares warning or unstable gradients
 - **Solution**: Check mesh quality and neighbor connectivity
 - **Debug**: Instrument `precomputeInverseATA()` to inspect `ATA` and the
-  LLT/FullPivLU fallback path
+  `solve3x3` (`Cramer3x3.h`) degeneracy check
 
 #### Best Practices
 1. **Modular Testing**: Test individual components before integration
@@ -1059,7 +1126,7 @@ Strip it before committing if it isn't gated by a persistent flag.
 ### Development Tips
 
 - **BCs**: Use `BoundaryConditions::printSummary()` to inspect configuration
-- **Gradients**: Inspect the `precomputeInverseATA()` LLT/LU path for poor stencils
+- **Gradients**: Inspect `precomputeInverseATA()` and `solve3x3` (`Cramer3x3.h`) for poor stencils
 - **Convection**: Verify upwind logic with simple 1D test cases
 - **Solver logs**: High residuals indicate BC or relaxation issues
 - **Mesh validation**: Reader aborts early through `FatalError` for malformed `.msh` files
@@ -1088,23 +1155,25 @@ The default `defaultCase` file is organized into logical sections:
 ```cpp
 mesh { file path; checkQuality bool; }
 physicalProperties { rho scalar; mu scalar; }
-initialConditions { U vector; p scalar; }
+initialConditions { type name; U vector; p scalar; k scalar; omega scalar; }
 boundaryConditions { U { patch { type value; } } p { ... } }
 time { timeScheme name; timeStep scalar; totalTime scalar; writingIntervals int; nOuterCorrectors int; CrankNicolsonCoeff scalar; }
 numericalSchemes { gradient scheme; convection { default scheme; U scheme; k scheme; omega scheme; } }
-SIMPLE { numIterations int; convergenceTolerance scalar; relaxationFactors { U scalar; p scalar; k scalar; omega scalar; } }
-linearSolvers { U { solver type; preconditioner type; tolerance scalar; maxIter int; } p { ... } }
-turbulence { model string; turbulenceIntensity scalar; hydraulicDiameter scalar; }
-output { filename string; debug bool; }
+velocityCoupling { algorithm name; }
+SIMPLE { numIterations int; convergenceTolerance scalar; nNonOrthogonalCorrectors int; relaxationFactors { U scalar; p scalar; k scalar; omega scalar; } }
+PISO { convergenceTolerance scalar; nNonOrthogonalCorrectors int; nPrimeCorrectors int; relaxationFactors { U scalar; p scalar; k scalar; omega scalar; } }
+linearSolvers { U { solver type; preconditioner type; tolerance scalar; maxIter int; } p { ... } petscOptions string; }
+turbulence { model string; turbulenceIntensity scalar; hydraulicDiameter scalar; roughWall bool; Cs scalar; Cw scalar; Ck scalar; vanDriest bool; Aplus scalar; kappa scalar; }
 forces { enabled bool; patch name; dragDirection vector; liftDirection vector; referenceVelocity vector; referenceArea scalar; }
+output { filename string; debug bool; }
 ```
 
 ### Adding New Case Parameters
 1. Add entry to appropriate section in `defaultCase`
 2. Read and validate it in `CaseConfig::loadConfiguration()`
-3. If the value belongs to a solver/model, add it to the appropriate
-   construction config
-4. Apply it through the config or through an owned application service
+3. If the value belongs to a solver/model, add it to `CaseConfiguration` and the
+   corresponding constructor
+4. Forward it in `SolverSetup::configure()`
 
 Example:
 ```cpp
@@ -1118,12 +1187,13 @@ SIMPLE
 const auto& simple = reader.section("SIMPLE");
 config.newParameter = simple.lookupOrDefault<Scalar>("newParameter", S(0.5));
 
-// In SolverSetup::configure(), forward into the SIMPLE constructor
+// In SolverSetup::configure(), forward into MomentumTransport::create
 // (one parameter per line, after adding the matching constructor param and
-//  member to SIMPLE):
-runtime.solver =
-    std::make_unique<SIMPLE>
+//  member to MomentumTransport / SIMPLE):
+modules.solver =
+    MomentumTransport::create
     (
+        config.algorithm,
         // ...existing args...
         config.newParameter,
         // ...remaining args...
@@ -1147,20 +1217,20 @@ flowchart TD
   B --> C[CaseConfig::loadConfiguration]
   C --> E[MeshCreator::create]
   E --> F[BCLoader]
-  F --> G[SolverSetup::configure]
+  F --> G[SolverSetup::configure + Initializer]
   G --> G2{isTransient?}
-  G2 -->|no| H[solve]
-  G2 -->|yes| H2[runTransient: per-step solve with prevStep]
+  G2 -->|no: SIMPLE| H[solve]
+  G2 -->|yes: PISO| H2[runTransient: per-step solve with prevStep]
   H2 --> H
-  H --> I[compute gradP]
-  I --> J[solveMomentum]
-  J --> K[updateRhieChowFlowRate]
+  H --> I[solveMomentum: gradP + nuEff + gradU + Ux/Uy/Uz]
+  I --> K[updateRhieChowFlowRate]
   K --> L[solvePressureCorrection]
   L --> M[correctVelocity]
   M --> N[correctFlowRate]
   N --> O[correctPressure]
+  O -.->|PISO PRIME correctors: gradP + solveMomentumExplicit| K
   O -.-> T[solveTurbulence]
-  T --> P[steady: checkConvergence / transient: fixed nOuterCorrectors]
+  T --> P[checkConvergence / maxIterations or nOuterCorrectors]
   P -->|loop| I
   P --> Q[PostProcess: reportStatistics + exportResults / appendTimeStep]
   Q --> R{forces enabled?}

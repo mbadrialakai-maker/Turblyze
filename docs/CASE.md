@@ -147,15 +147,16 @@ initialConditions
     type            potentialFlow;
     U               (10 0 0);       // Required: Freestream velocity [m/s]
     p               0;              // Required: Reference pressure [Pa]
-    nCorrectors     3;              // Optional: Non-orthogonal corrector passes (default: 3)
+    k               3.75e-5;        // Optional: Initial TKE [m^2/s^2] (RANS only)
+    omega           1.6;            // Optional: Initial omega [1/s] (RANS only)
 }
 ```
-Solves $\nabla^2 \phi = \nabla \cdot \mathbf{U}_\infty$ with wall-tangency boundary conditions $\mathbf{U} \cdot \mathbf{n} = 0$, corrects cell velocity $\mathbf{U} = \mathbf{U}_\infty - \nabla \phi$, and sets Bernoulli pressure $p = p_\infty + \frac{1}{2}\rho (U_\infty^2 - |\mathbf{U}|^2)$.
+Solves $\nabla^2 \phi = \nabla \cdot \mathbf{U}_\infty$ with wall-tangency boundary conditions $\mathbf{U} \cdot \mathbf{n} = 0$, corrects cell velocity $\mathbf{U} = \mathbf{U}_\infty - \nabla \phi$, and sets Bernoulli pressure $p = p_\infty + \frac{1}{2}\rho (U_\infty^2 - |\mathbf{U}|^2)$. Performs `1 + nNonOrthogonalCorrectors` Poisson projection solves using `nNonOrthogonalCorrectors` from the active `SIMPLE` or `PISO` section.
 
 **Notes**:
 - `type` is optional and defaults to `Uniform` for full backward compatibility.
-- `k` and `omega` are only used when `model` is not `Laminar`
-- When omitted, they are auto-computed from initial velocity using
+- `k` and `omega` are only used when a RANS model (`kOmegaSST`) is selected.
+- When omitted under `kOmegaSST`, they are auto-computed from initial velocity using
   `turbulenceIntensity` and `hydraulicDiameter` from the `turbulence`
   section (see [turbulence](#11-turbulence)):
   - `l = 0.07 * hydraulicDiameter`
@@ -223,20 +224,7 @@ boundaryConditions
 - `fixedValue`: Fixed value at boundary (requires `value`)
 - `zeroGradient`: Zero normal gradient
 - `noSlip`: No-slip condition for velocity (equivalent to `fixedValue (0 0 0)`)
-- Symmetry-plane (mirror) condition : **mesh-derived, not a case-file type**.
-  The Fluent `.msh` zone type determines which patches are symmetry planes;
-  at load time every field on such a patch is set to the internal symmetry
-  condition automatically. Scalars get a zero normal gradient and zero normal
-  flux; velocity has its wall-normal component driven to zero while the
-  tangential components are mirrored (`U_f = U_P - (U_P·n) n`), so the face
-  carries no mass flux. Symmetry patches should be **omitted** from
-  `boundaryConditions`: any entry for one (including an OpenFOAM-style
-  `type symmetry;`) is ignored with a `[WARNING]` , the user has no say over
-  a symmetry boundary. Writing `type symmetry;` on a patch whose mesh zone
-  is *not* a symmetry plane is a fatal error. A symmetry patch must be
-  planar. Wall functions and wall-distance seeding key off the mesh zone
-  type (`wall`), not this condition, so a symmetry patch, never a wall
-  zone, is automatically excluded from both.
+- `symmetry`: Symmetry-plane (mirror) condition. Scalars get a zero normal gradient and zero normal flux; velocity has its wall-normal component driven to zero while the tangential components are mirrored (`U_f = U_P - (U_P·n) n`), so the face carries no mass flux. A symmetry patch must be planar.
 - `kWallFunction` / `omegaWallFunction` / `nutWallFunction`: Wall-function
   conditions for `k`, `omega`, and `nut` on wall patches. They must be
   configured as a complete triplet on a given wall patch (all three) or
@@ -266,13 +254,8 @@ compute the value from `turbulenceIntensity` and `hydraulicDiameter`
 - `omega = sqrt(k) / (C_mu^0.25 * 0.07 * D_h)`
 
 ### 5. time
-**Required in every case file.** Declares the time scheme, which is
-**authoritative** for the velocity-coupling algorithm: `steadyState` selects
-**SIMPLE** and any transient scheme selects **PISO** (see
-[velocityCoupling](#7-velocitycoupling-optional)). For a steady run, set
-`timeScheme steadyState`; every other key in this section is then ignored. A
-transient `timeScheme` switches to the transient (URANS) path, which runs with a
-fixed number of PISO outer correctors per step.
+**Required in every case file.** Declares the time scheme, which also fixes the pressure–velocity coupling algorithm: `steadyState` selects **SIMPLE** and any transient scheme selects **PISO** (see
+[velocityCoupling](#7-velocitycoupling-optional)). For a steady run, set `timeScheme steadyState`; time marching keys are then ignored. A transient `timeScheme` switches to the transient (URANS / LES) path, running with up to `nOuterCorrectors` outer iterations per time step.
 
 ```cpp
 time
@@ -299,14 +282,9 @@ time
   backward implicit scheme. Unconditionally stable, recommended for LES. Automatically uses first-order Euler on the initial startup time step.
 
 **Notes**:
-- `timeStep` and `totalTime` are **required** and must be positive whenever a
-  transient scheme is selected. The number of steps is
-  `round(totalTime / timeStep)` (at least one).
-- `writingIntervals` (default `1`) writes output every N steps; the initial
-  condition (t = 0) and the final step are always written. Must be `>= 1`.
-- `nOuterCorrectors` (default `1`) is the number of PISO outer correctors
-  performed each time step. Must be `>= 1`. The `SIMPLE.numIterations`/
-  `convergenceTolerance` keys only govern the steady path.
+- `timeStep` and `totalTime` are **required** and must be positive whenever a transient scheme is selected. The number of steps is `round(totalTime / timeStep)` (at least one).
+- `writingIntervals` (default `1`) writes output every N steps; the initial condition (t = 0) and the final step are always written. Must be `>= 1`.
+- `nOuterCorrectors` (default `1`) is the maximum number of PISO outer correctors  performed each time step. Must be `>= 1`. The `SIMPLE.numIterations`/ `convergenceTolerance` keys only govern the steady path.
 - `CrankNicolsonCoeff` (default `1.0`) is consumed only by `CrankNicolson`; it
   must lie in `[0, 1]`.
 - Transient output is appended into one temporal `.vtkhdf` file per grid
@@ -373,13 +351,9 @@ velocityCoupling
   from the [PISO](#9-piso) section.
 
 **Notes**:
-- The section is **optional**; when absent, `algorithm` is inferred from the
-  time scheme.
-- On a mismatch the time scheme wins: a transient scheme with `algorithm SIMPLE`
-  ⇒ `[WARNING]` + switch to PISO; `steadyState` with `algorithm PISO` ⇒
-  `[WARNING]` + switch to SIMPLE.
-- Only the active algorithm's section is read (`SIMPLE{}` or `PISO{}`); the other
-  may be absent.
+- The section is **optional**; when absent, `algorithm` is inferred from the time scheme (`SIMPLE` or `PISO`).
+- On a mismatch, the time scheme wins: a transient scheme with `algorithm SIMPLE` ⇒ `[WARNING]` + switch to PISO; `steadyState` with `algorithm PISO` ⇒ `[WARNING]` + switch to SIMPLE.
+- Only the active algorithm's section is read (`SIMPLE{}` or `PISO{}`); the other may be absent.
 
 ### 8. SIMPLE
 Steady-state SIMPLE controls. Read only when SIMPLE is the active algorithm.
@@ -395,8 +369,8 @@ SIMPLE
     {
         U                   0.7;        // Velocity under-relaxation [0-1]
         p                   0.3;        // Pressure under-relaxation [0-1]
-        k                   0.5;        // Turbulent kinetic energy relaxation
-        omega               0.5;        // Specific dissipation rate relaxation
+        k                   0.5;        // Optional: TKE relaxation (default 0.5)
+        omega               0.5;        // Optional: omega relaxation (default 0.5)
     }
 }
 ```
@@ -415,12 +389,12 @@ PISO
     nNonOrthogonalCorrectors    0;      // p' corrector re-solves (default 0)
     nPrimeCorrectors            2;      // Explicit PRIME correctors (>= 1, default 1)
 
-    relaxationFactors
+    relaxationFactors                   // Optional block (all default to 1.0)
     {
-        U                   1.0;        // Velocity under-relaxation
-        p                   1.0;        // Pressure under-relaxation
-        k                   1.0;        // Turbulent kinetic energy relaxation
-        omega               1.0;        // Specific dissipation rate relaxation
+        U                   1.0;        // Velocity under-relaxation (default 1.0)
+        p                   1.0;        // Pressure under-relaxation (default 1.0)
+        k                   1.0;        // TKE relaxation (default 1.0)
+        omega               1.0;        // omega relaxation (default 1.0)
     }
 }
 ```
@@ -432,7 +406,7 @@ PISO
   dominant; very high Courant numbers can destabilize the explicit sweep. Keep
   `U` and `p` relaxation at `1.0`.
 
-### 11. linearSolvers
+### 10. linearSolvers
 Linear solver settings for each field.
 
 ```cpp
@@ -511,8 +485,8 @@ Recognized keys per section:
   - `Cholesky`: Direct sparse Cholesky factorization (for symmetric systems)
 
 - `tolerance`: relative residual tolerance used by the iterative
-  solvers (`|r| / |b|`, true unpreconditioned residual).
-- `maxIter`: iteration cap before the solver gives up.
+  solvers (`|r| / |b|`, true unpreconditioned residual). Defaults to `1e-8` for `U` and `1e-6` for `p`, `k`, and `omega`.
+- `maxIter`: iteration cap before the solver gives up (default `1000`).
 - `petscOptions`: optional string forwarded verbatim into the PETSc
   options database at startup (read up to the terminating `;`, spaces
   preserved). Each solver reads the database through its own equation
@@ -525,36 +499,44 @@ Algorithm/equation pairing is not validated. Picking `PCG` for a
 non-symmetric equation will compile and run but will not converge to the
 correct solution.
 
-### 12. turbulence
+### 11. turbulence
 Turbulence model configuration.
 
 ```cpp
 turbulence
 {
-    model               kOmegaSST;  // Required: Laminar or kOmegaSST
+    // Options: Laminar, kOmegaSST, Smagorinsky, WALE
+    model               Smagorinsky;
+
+    // RANS (kOmegaSST) settings:
     turbulenceIntensity 0.05;       // Optional: default 0.05 (5%)
     hydraulicDiameter   0.01;       // Optional: default 0.01 [m]
     roughWall           false;      // Optional: default false
+
+    // LES (Smagorinsky) settings:
+    Cs                  0.165;      // Optional: Smagorinsky constant (default 0.165)
+    Ck                  0.094;      // Optional: Yoshizawa SGS TKE constant (default 0.094)
+    vanDriest           true;       // Optional: enable Van Driest wall damping (default true)
+    Aplus               26.0;       // Optional: Van Driest A+ constant (default 26.0)
+    kappa               0.41;       // Optional: von Karman constant (default 0.41)
+
+    // LES (WALE) settings:
+    Cw                  0.325;      // Optional: WALE model constant (default 0.325)
+    Ck                  0.094;      // Optional: SGS TKE constant (default 0.094)
 }
 ```
 
 **Notes**:
 - `model` is required and selects the turbulence treatment: `Laminar`
-  (no turbulence transport) or `kOmegaSST`. An omitted or unknown `model`
-  aborts at load time with a fatal error listing the valid options.
-- `turbulenceIntensity` and `hydraulicDiameter` are used to auto-compute
-  initial values for `k` and `omega` when they are not explicitly
-  specified in `initialConditions` (see [initialConditions](#3-initialconditions)).
-  They are ignored when `model` is `Laminar`.
-- `roughWall` enables the SST $F_3$ rough-wall blending function. When
-  `true`, the eddy-viscosity limiter ($F_2$) is damped inside the
-  roughness sublayer to prevent artificial suppression of $\nu_t$ on
-  aerodynamically rough surfaces. Leave `false` (default) for smooth-wall simulations. This skips the $F_3$ computation entirely.
-- k-omega SST model constants are hardcoded in
-  `src/Models/Turbulence/kOmegaSST.h`
-  and cannot be changed via case file
-- Wall distance is computed using meshWave iterative propagation method
-  (not configurable)
+  (no turbulence transport), `kOmegaSST` (two-equation RANS), `Smagorinsky` (classical LES SGS model with optional Van Driest damping), or `WALE` (Wall-Adapting Local Eddy-viscosity LES SGS model). An omitted or unknown `model` aborts at load time with a fatal error listing the valid options.
+- For LES models (`Smagorinsky`, `WALE`):
+  - Linear solvers for `k` and `omega` are **not** required in `linearSolvers`.
+  - Wall function triplets $(k + \omega + \nu_t)$ are not required on wall patches.
+  - Automatically exports `nut`, `k_sgs`, and `delta` into `.vtkhdf` outputs.
+  - `Cs`, `vanDriest`, `Aplus`, and `kappa` apply only to `Smagorinsky`; `Cw` applies only to `WALE`, which recovers near-wall $\nu_t \sim y^3$ scaling without a damping function.
+- `turbulenceIntensity` and `hydraulicDiameter` are used to auto-compute initial values for `k` and `omega` when `kOmegaSST` is active.
+- `roughWall` enables the SST $F_3$ rough-wall blending function for RANS.
+- Wall distance is computed using meshWave iterative propagation method.
 
 ### 12. forces (Optional)
 Aerodynamic force and coefficient reporting on one wall patch.
@@ -608,8 +590,7 @@ output
 - All computed volume fields are written to the volume file. Boundary patch
   metadata (`patchIdx`, `patchZoneIdx`, `patchTypeIdx`, `isWall`) is written to
   `_boundary.vtkhdf`; `wallShearStress` is written for all runs, while
-  turbulence-only wall diagnostics such as `yPlus` are added only when
-  turbulence is enabled.
+  RANS wall diagnostics such as `yPlus` are added for `kOmegaSST` runs.
 - Volume cells are encoded as `VTK_POLYHEDRON` to preserve the mesh's
   face-based topology. Some downstream ParaView filters may run slower than
   with native tetra/hex/wedge/pyramid output.

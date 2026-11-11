@@ -170,11 +170,11 @@ All documentation lives in **headers only**. Source files have no Doxygen on met
 **In headers (.h)**: use `///` for all method and function declarations:
 ```cpp
 /// Calculate boundary face value for a scalar field
-[[nodiscard]] Scalar boundaryFaceValue
+[[nodiscard]] Scalar faceValue
 (
-    Field field,
-    const ScalarField& phi,
-    const Face& face
+    const Face& face,
+    Scalar ownerValue,
+    Field field
 ) const;
 
 /// Default constructor
@@ -183,8 +183,8 @@ BoundaryConditions() = default;
 /// Print summary of all boundary conditions
 void printSummary() const;
 
-/// Nested map: patch name → field → boundary data
-std::map<Name, std::map<Field, BoundaryData>> patchBoundaryData_;
+/// Nested map: patch name → field → polymorphic boundary condition
+BCs boundaryConditions_;
 ```
 
 Use multiple `///` lines only when a non-obvious invariant or formula genuinely cannot fit on one line:
@@ -200,7 +200,7 @@ sentences. Full prose sentences on member-variable comments may end with a perio
 explaining a non-obvious constraint. Do not use `@param`, `@return`, or `@note` tags on
 individual method declarations, since the function signature and name already carry that information.
 The full `/** @brief … @param … @return */` Doxygen form is reserved for the file-level
-`@file`/`@class` block at the top of each header.
+`@file`/`@brief`/`@details` block at the top of each header.
 
 **In source files (.cpp)**: no Doxygen on implementations; use inline `//` comments only where logic needs explanation:
 ```cpp
@@ -215,17 +215,17 @@ if (numNodes == 3)
 ## Function Signature Formatting
 Multi-parameter functions use Allman-style with each parameter on its own line:
 ```cpp
-void setFixedValue
+[[nodiscard]] Scalar faceValue
 (
-    const Name& patchName,
-    Field field,
-    Scalar value
-);
+    const Face& face,
+    Scalar ownerValue,
+    Field field
+) const;
 ```
 
 Single-parameter or short-signature functions can stay on one line:
 ```cpp
-void addPatch(BoundaryPatch patch);
+void setPatch(const BoundaryPatch& p) noexcept;
 ```
 
 ## Const Correctness
@@ -327,9 +327,9 @@ std::cerr << "\n" << "Error: " << msg << "\n";
 - **Member variables**: camelCase with trailing underscore (e.g., `tolerance_`, `fieldName_`)
 - **Local variables**: camelCase (e.g., `cellVolume`, `faceArea`)
 - **Type aliases**: PascalCase (e.g., `VectorField`, `ScalarField`)
-- **Enum class names**: PascalCase (e.g., `Field`, `BCType`, `PatchType`)
-- **Enumerators**: lowerCamelCase (e.g., `Field::Ux`, `BCType::fixedValue`,
-  `PatchType::physical`). Avoid `ALL_CAPS`, since it collides with preprocessor macros
+- **Enum class names**: PascalCase (e.g., `Field`, `PatchType`)
+- **Enumerators**: lowerCamelCase (e.g., `Field::Ux`, `Field::pCorr`,
+  `PatchType::physical`, `PatchType::processor`). Avoid `ALL_CAPS`, since it collides with preprocessor macros
   (C++ Core Guidelines Enum.5). Prefer `enum class` over plain `enum` (Enum.3).
 
 ### Intent-revealing aliases
@@ -391,7 +391,7 @@ The brief reason on the `///` comment documents *why* the operation is restricte
 | No non-trivial members | *(declare none, rule of zero)* | | |
 
 **Rule of zero**: If the compiler-generated defaults are correct, declare nothing.
-Applies to value-only classes (`Face`, `Cell`, `BoundaryData`).
+Applies to value-only classes (`Face`, `Cell`, `BoundaryPatch`, `BoundaryCoeffs`).
 
 **Rule of five**: Whenever one special member is declared, declare all five.
 Declaring only some leaves the class in a partially specified state that
@@ -412,7 +412,7 @@ ClassName(int n, Scalar tol)
 
 // Acceptable only when initializer_list constructor would be selected instead
 // (e.g. std::vector fill constructor: vector(n, value) ≠ vector{n, value})
-internalField_(Mesh::cellCount(), T{})
+internalField_(mesh.numCells(), initialValue)
 ```
 
 Initializer list order must match member declaration order exactly.
@@ -428,7 +428,7 @@ All stream insertion operators (`<<`) must align at **column 4** (position 4 fro
 
 **Short stream objects (≤4 chars):**
 ```cpp
-Info<< "Message" << value << '\n';
+out << "Message" << value << '\n';
 os  << "Data: " << x << ", " << y << '\n';
 log << "Status" << '\n';
 ```
@@ -441,10 +441,6 @@ std::cout
 
 std::cerr
     << "Error: " << errorMsg << std::endl; // Explicit flush for diagnostics
-
-WarningInFunction
-    << "Warning message"
-    << std::endl; // Explicit flush for diagnostics
 ```
 
 **Multi-line continuations:**
@@ -455,17 +451,8 @@ std::cout
     << " part 2: " << value2 << '\n';
 ```
 
-**In operator<< overloads:**
-```cpp
-std::ostream& operator<<(std::ostream& os, const Vector& v)
-{
-    os  << "(" << v.x() << ", " << v.y() << ", " << v.z() << ")";
-    return os;
-}
-```
-
 **With formatted text:**
-Use modern C++20 `std::format`:
+Prefer modern C++20 `std::format` for formatted console output:
 ```cpp
 std::cout << std::format("{:.6e} m²\n", value);
 ```
