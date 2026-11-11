@@ -29,7 +29,9 @@ SPDX-License-Identifier: Apache-2.0
 ### Core Capabilities
 - **3D Incompressible Flow**: Solves momentum equations with pressure correction with the SIMPLE/PISO algorithm
 
-- **Steady-state and Transient (URANS)**: Runs a steady-state simulation with the SIMPLE algorithm or a transient simulation with implicit Euler / Crank-Nicolson / second-order implicit time schemes using the PISO algorithm
+- **Steady-state and Transient (URANS / LES)**: Runs a steady-state simulation with the SIMPLE algorithm or a transient simulation with implicit Euler / Crank-Nicolson / second-order implicit time schemes using the PISO algorithm
+
+- **Flow Initialization**: Supports uniform initial fields (`Uniform`), analytical 3D Taylor–Green vortex initialization (`taylorGreen`), and divergence-free potential-flow initialization (`potentialFlow`)
 
 - **Convection Schemes**: Upwind (UDS), Second-Order Upwind (SOU), Central-Difference (CDS), and LUST (Linear-Upwind Stabilized Transport) convection schemes with the deferred-correction approach
 
@@ -61,8 +63,8 @@ SPDX-License-Identifier: Apache-2.0
 - **PETSc**: Krylov linear solvers, located through `pkg-config` (so
   `pkg-config` itself is required at configure time)
 - **MPI**: any MPI implementation providing a C++-capable compiler wrapper
-  (the `CXX` component); initialized through PETSc and called directly in
-  `src/Parallel/`
+  (the `CXX` component); initialized directly by `MPIRuntime` in `src/Parallel/`
+  before `PETScRuntime` attaches to it
 - **METIS**: mesh partitioning for the runtime domain decomposition
 - **Catch2 v3** (tests only): the CTest suite links Catch2; required only when
   `BUILD_TESTING` is on (the default). Not needed to build or run the solver —
@@ -140,34 +142,16 @@ ctest --test-dir build.nosync --output-on-failure
 
 Three binaries back four CTest labels:
 
-- **`turblyze_unit_tests`** — serial unit tests (primitives, schemes, mesh
-  geometry, boundary-condition linearizations and factory, least-squares
-  gradients and the Barth-Jespersen limiter, case-file parsing, runtime
-  selection), one CTest entry per test case, label `serial`. Never initializes
-  MPI.
-- **`turblyze_mpi_tests`** — MPI + PETSc tests launched under `mpirun` at 1, 2,
-  and 4 ranks: global reductions and their rank-count invariance, global
-  indexing, halo exchange on a decomposed fixture, matrix assembly /
-  relaxation / constraint / Jacobi update, a small diffusion solve with both
-  Krylov solvers, and a standalone k-omega SST construction and solve. Label
-  `mpi`. Every case runs at all three rank counts, on a box decomposed through
-  the production METIS path; only the halo-exchange cases `SKIP`, at np = 1,
-  where there is no cut to exchange across.
-- **`turblyze_abort_probe`** — a subprocess that deterministically triggers a
+- **`turblyze_unit_tests`**: serial unit tests (primitives,
+  dense solvers, cell/face field containers, time/convection/interpolation/least-squares gradient schemes and the Barth-Jespersen limiter, mesh geometry, boundary-condition linearizations, factory, and `BCLoader`, turbulence inlet calculators and `LES` (`Smagorinsky`, `WALE`) models, `Uniform` flow initialization, serial `Comm`/`Reduce`/`GlobalIndex` identity paths, case-file parsing, and runtime selection), one CTest entry per test case, label `serial`.
+- **`turblyze_mpi_tests`**: MPI + PETSc tests launched under `mpirun` at 1, 2, and 4 ranks: global reductions and their rank-count invariance, global indexing, METIS partitioning and halo exchange on a decomposed fixture, parallel least-squares gradients, matrix assembly / relaxation / constraint / explicit Jacobi update, diffusion and advection-diffusion solves across PETSc Krylov solvers (`PCG`, `BiCGSTAB`, `GMRES`) and preconditioners (`Jacobi`, `AMG`, `None`, `ILU`, `BlockJacobi`, `SOR`), standalone `kOmegaSST` and `LES` (`Smagorinsky`, `WALE`) behavior and solves, and parallel flow initialization (`Uniform`, `taylorGreen`, `potentialFlow`). Label `mpi`. Every case runs at all three rank counts, on a box decomposed through the production METIS path; only the halo-exchange and partition-cut cases `SKIP` at np = 1, where there is no cut to exchange across.
+- **`turblyze_abort_probe`**: a subprocess that deterministically triggers a
   `FatalError`; the `death`-labelled tests assert it prints `FATAL ERROR` and
   aborts (a control run exits cleanly).
 
-A fourth label, `regression`, runs the solver itself: a fixed-iteration steady
-sphere case at Re = 300 whose total drag coefficient is pinned (tolerance
-`1e-4`). It takes ~35 s and is excluded from the fast gate. The pin is only
-reproducible in the configuration it was measured in, so the test registers
-itself only for a double-precision Release build with `TURBLYZE_NATIVE_ARCH`
-on, and only when the (unshipped) `inputFiles/sphere.msh` is present. Because
-`-march=native` ties the pin to the build host's CPU (the default value comes
-from an Apple M4), other machines re-pin with
-`-DTURBLYZE_REGRESSION_CD_PIN=<value>` (and, if needed,
-`-DTURBLYZE_REGRESSION_CD_TOL=<value>`) from column 4 of the `Cd` line in
-`regressionOut/reg_forces.txt`.
+A fourth label, `regression`, runs the solver itself: a fixed-iteration steady sphere case at Re = 300 whose total drag coefficient is pinned (tolerance `1e-4`). It takes ~35 s and is excluded from the fast gate. The pin is only reproducible in the configuration it was measured in, so the test registers itself only for a double-precision Release build with `TURBLYZE_NATIVE_ARCH` on, and only when the (unshipped) `inputFiles/sphere.msh` is present. Because `-march=native` ties the pin to the build host's CPU (the default value comes
+from an Apple M4), other machines re-pin with `-DTURBLYZE_REGRESSION_CD_PIN=<value>` (and, if needed,
+`-DTURBLYZE_REGRESSION_CD_TOL=<value>`) from column 4 of the `Cd` line in `regressionOut/reg_forces.txt`.
 
 Run a subset by label:
 
@@ -188,37 +172,16 @@ in your shell; other platforms keep the real hardware topology.
 Run from the `build.nosync/` directory to ensure correct path resolution:
 ```bash
 cd build.nosync
-./Turblyze                     # Uses the default `defaultCase` file
+./Turblyze                     # Uses `../defaultCase` by default
 ./Turblyze customCase          # Uses a custom case file
 ```
 
 ### Parallel Execution
 The same binary runs in parallel under MPI, with no case-file changes. The mesh is decomposed at runtime with METIS:
 ```bash
-mpirun -np 4 ./Turblyze              # Uses the default `defaultCase` file
+mpirun -np 4 ./Turblyze              # Uses `../defaultCase` by default
 mpirun -np 4 ./Turblyze customCase   # Uses a custom case file
 ```
-
-### Case File System
-The solver uses a case file system (default file: `defaultCase`). This allows runtime configuration without recompilation.
-
-### Default Case
-The default `defaultCase` file contains:
-- **Mesh**: `../inputFiles/sphere.msh` (sphere in a channel)
-- **Boundary Conditions**:
-  - Inlet: Fixed velocity (0, 0, -0.043821) m/s, zero gradient pressure
-  - Outlet: Zero gradient velocity, fixed pressure (0 Pa)
-  - Walls (`sphere`, `wall1`–`wall4`): No-slip velocity, zero gradient pressure; `kWallFunction`, `omegaWallFunction`, `nutWallFunction` for turbulence
-- **Time**: Transient simulation, implicit-Euler stepping (timeStep 0.1 s, totalTime 200 s, 1 outer corrector per step)
-- **Discretization**: Second-Order Upwind convection scheme for momentum and Upwind convection scheme for turbulence equations. Least-squares for gradients computation
-- **SIMPLE Parameters**: αU = 1.0, αp = 1.0, αk = 0.5, αω = 0.5, tolerance = 1e-3 (scaled residuals), max iterations = 500
-- **Turbulence**: `Laminar` (k-omega SST, Smagorinsky LES, and WALE LES are available via `model kOmegaSST`, `model Smagorinsky`, or `model WALE`)
-- **Output**: `../outputFiles.nosync/sphere.vtkhdf` (plus `sphere_boundary.vtkhdf`, and `sphere_forces.txt` when forces are enabled). The directory must already exist, the writers do not create it.
-
-### Flow Physics
-- **Fluid Properties**: Air (ρ = 1.225 kg/m³, μ = 1.7894e-5 Pa·s)
-- **Flow Type**: Low-Reynolds laminar flow over a sphere
-- **Turbulence Inlet Conditions** (when k-omega SST is enabled): Turbulence intensity 5%, hydraulic diameter 0.01 m
 
 ## Input/Output
 
@@ -256,12 +219,9 @@ The default `defaultCase` file contains:
 ### ParaView Visualization (6.1 or newer recommended)
 1. Open the `.vtkhdf` file in ParaView
 2. Apply the file and click the "eye" icon to make it visible
-3. Color by desired field (e.g., `pressure`, `velocityMagnitude`); for a
-   transient run, scrub the time slider to animate the series
-4. Open the corresponding `_boundary.vtkhdf` file to inspect boundary patches
-   or wall quantities (`wallShearStress` always, `yPlus` when turbulent)
-5. Note: volume fields are cell-centered data; boundary metadata and wall
-   diagnostics are boundary-face data
+3. Color by desired field (e.g., `pressure`, `velocityMagnitude`); for a transient run, scrub the time slider to animate the series
+4. Open the corresponding `_boundary.vtkhdf` file to inspect boundary patches or wall quantities (`wallShearStress` always, `yPlus` for RANS runs)
+5. Note: volume fields are cell-centered data; boundary metadata and wall diagnostics are boundary-face data
 
 ## Case Configuration
 
@@ -329,22 +289,30 @@ OpenFOAM convention:
 - **`src/Primitives/`**: Core scalar/vector/tensor types, logging, errors
 - **`src/Mesh/`**: Geometric entities, topology, mesh I/O, mesh checking
 - **`src/Fields/`**: Typed cell and face field containers
-- **`src/BoundaryConditions/`**: Boundary-type storage, evaluation, and
-  case loading
-- **`src/Schemes/`**: Gradient, interpolation, and convection schemes
-- **`src/LinearSystem/`**: Matrix assembly, transport equations, linear solvers
+- **`src/BoundaryConditions/`**: Boundary-type storage, coefficient contracts,
+  runtime factory, and case loading (`BoundaryConditions.h/.cpp`,
+  `BoundaryCoeffs.h`, `BoundaryTypeFactory.h/.cpp`, `BoundaryTypes/`,
+  `BCLoader.h/.cpp`)
+- **`src/Schemes/`**: Gradient (`GradientSchemes/`), interpolation
+  (`Interpolation/`), convection (`ConvectionSchemes/`), and time
+  (`TimeSchemes/`) discretization schemes
+- **`src/LinearSystem/`**: PETSc runtime, matrix assembly, transport equations,
+  linear solvers, and analytical dense solvers (`Cramer3x3.h`, `Cramer4x4.h`)
 - **`src/Parallel/`**: MPI runtime, METIS mesh decomposition, ghost-cell halo
   exchange, and collective reductions
-- **`src/Solver/`**: Pressure-velocity coupling (SIMPLE and PISO algorithms)
+- **`src/Solver/`**: Segregated pressure–velocity coupling (`MomentumTransport`,
+  `Segregated`, `SIMPLE`, `PISO`) and flow initialization (`Initialization/`:
+  `Initializer`, `Uniform`, `TaylorGreen`, `PotentialFlow`)
 - **`src/Models/`**: Physical models
   - **`src/Models/Turbulence/`**: Turbulence modeling
     (`TurbulenceModel.h/.cpp`, `Laminar/`, `RANS/`, `LES/`)
-- **`src/PostProcessing/`**: Derived fields and output orchestration
-  (`PostProcess.h/.cpp`)
+- **`src/PostProcessing/`**: Derived fields, aerodynamic force integration, and
+  output orchestration (`DerivedFields.h/.cpp`, `Forces.h/.cpp`,
+  `PostProcess.h/.cpp`)
   - **`src/PostProcessing/VTK/`**: VTKHDF volume and boundary writers
     (direct HDF5, no VTK library dependency)
-- **`src/Case/`**: Case file system
-  (`CaseReader.h/.cpp`, `CaseConfiguration.h/.cpp`)
+- **`src/Case/`**: Case file parsing, configuration, and runtime selection
+  (`CaseReader.h/.cpp`, `CaseConfiguration.h/.cpp`, `RuntimeSelection.h/.cpp`)
 
 ## Documentation
 
@@ -367,13 +335,30 @@ sudo apt install doxygen graphviz
 
 ## Verification and Validation
 
-Two committed V&V studies back the solver's numerics, each with its own
+Committed V&V studies back the solver's numerics, each with its own
 `README.md` (results) and `runGuide.md` (reproduction steps):
 
 - **`verification/`**: code-to-code comparison against OpenFOAM
   (`simpleFoam`) on the same sphere case: same mesh, boundary conditions,
   k-omega SST constants, and force-coefficient definition.
-- **`validation/`**: comparison against experiment: a sphere drag curve traced against the Morrison (2013) correlation, combining a laminar low-Re sweep with subcritical k-omega SST benchmark points.
+- **`validation/`**: comparisons against experiment and DNS across steady,
+  transient, laminar, RANS, and LES regimes:
+  - **`validation/sphere/`**: sphere drag curve traced against the Morrison
+    (2013) correlation across $Re \in [0.1, 10^5]$, combining a laminar low-Re
+    sweep with subcritical `kOmegaSST` benchmark points (steady `SIMPLE`).
+  - **`validation/cylinder/`**: 2D circular cylinder von Kármán vortex shedding
+    at $Re \approx 150$, validating Strouhal number, mean drag, and RMS lift against
+    experiment (transient `PISO`, laminar).
+  - **`validation/AhmedBody/`**: 3D external automotive aerodynamics over a 25°
+    slant-angle Ahmed body at $Re_H = 7.68 \times 10^5$, validating drag
+    coefficient and pressure/friction drag breakdown against Ahmed et al. (1984)
+    wind-tunnel experiments (steady `SIMPLE`, `kOmegaSST`, `potentialFlow`
+    initialization, `AMG` pressure preconditioner).
+  - **`validation/LES/TaylorGreen/`**: 3D Taylor–Green vortex transition and
+    turbulent decay at $Re = 1600$ on an impermeable symmetry box, validating
+    kinetic-energy and enstrophy evolution against van Rees et al. (2011) /
+    Brachet et al. (1983) spectral DNS (transient `PISO` with
+    `secondOrderImplicit` + `LUST`, `Smagorinsky` and `WALE` LES).
 
 ## Development and Extension
 
