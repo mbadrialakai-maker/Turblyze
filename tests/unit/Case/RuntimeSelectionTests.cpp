@@ -24,7 +24,12 @@
 #include "TimeScheme.h"
 #include "LinearSolvers.h"
 #include "TurbulenceModel.h"
+#include "LES.h"
+#include "Smagorinsky.h"
+#include "WALE.h"
+#include "MomentumTransport.h"
 #include "BoundaryConditions.h"
+#include "Initializer.h"
 #include "MeshFixtures.h"
 #include "StringTypes.h"
 
@@ -124,7 +129,87 @@ TEST_CASE("Turbulence-model selection", "[selection]")
     const NameList names = TurbulenceModel::availableModels();
     REQUIRE(contains(names, "Laminar"));
     REQUIRE(contains(names, "kOmegaSST"));
+    REQUIRE(contains(names, "Smagorinsky"));
+    REQUIRE(contains(names, "WALE"));
 
     REQUIRE(TurbulenceModel::isLaminar("Laminar"));
     REQUIRE_FALSE(TurbulenceModel::isLaminar("kOmegaSST"));
+    REQUIRE_FALSE(TurbulenceModel::isLaminar("Smagorinsky"));
+    REQUIRE_FALSE(TurbulenceModel::isLaminar("WALE"));
+
+    REQUIRE(TurbulenceModel::isRANS("kOmegaSST"));
+    REQUIRE_FALSE(TurbulenceModel::isRANS("Smagorinsky"));
+    REQUIRE_FALSE(TurbulenceModel::isRANS("WALE"));
+    REQUIRE_FALSE(TurbulenceModel::isRANS("Laminar"));
+
+    REQUIRE(TurbulenceModel::isLES("Smagorinsky"));
+    REQUIRE(TurbulenceModel::isLES("WALE"));
+    REQUIRE_FALSE(TurbulenceModel::isLES("kOmegaSST"));
+    REQUIRE_FALSE(TurbulenceModel::isLES("Laminar"));
+
+    const NameList lesNames = LES::availableModels();
+    REQUIRE(contains(lesNames, "Smagorinsky"));
+    REQUIRE(contains(lesNames, "WALE"));
+
+    const TestMesh box(2, 1, 1);
+    const BoundaryConditions bc;
+    const auto lesModel =
+        LES::create
+        (
+            "Smagorinsky",
+            box.mesh(),
+            bc,
+            S(1e-4),
+            Smagorinsky::coeffs_.Cs,
+            Smagorinsky::coeffs_.Ck,
+            WALE::coeffs_.Cw,
+            true,
+            Smagorinsky::coeffs_.Aplus,
+            Smagorinsky::coeffs_.kappa,
+            false
+        );
+    REQUIRE(lesModel != nullptr);
+    REQUIRE(lesModel->isTurbulent() == true);
+    REQUIRE(lesModel->wallDistanceConverged() == true);
+    REQUIRE(dynamic_cast<const Smagorinsky*>(lesModel.get()) != nullptr);
+
+    const auto waleModel =
+        LES::create
+        (
+            "WALE",
+            box.mesh(),
+            bc,
+            S(1e-4),
+            Smagorinsky::coeffs_.Cs,
+            WALE::coeffs_.Ck,
+            WALE::coeffs_.Cw,
+            true,
+            Smagorinsky::coeffs_.Aplus,
+            Smagorinsky::coeffs_.kappa,
+            false
+        );
+    REQUIRE(waleModel != nullptr);
+    REQUIRE(waleModel->isTurbulent() == true);
+    REQUIRE(waleModel->wallDistanceConverged() == true);
+    REQUIRE(dynamic_cast<const WALE*>(waleModel.get()) != nullptr);
+}
+
+// *********************** MomentumTransport Algorithms ***********************
+
+TEST_CASE("MomentumTransport algorithm selection", "[selection]")
+{
+    const NameList names = MomentumTransport::availableAlgorithms();
+    REQUIRE(contains(names, "SIMPLE"));
+    REQUIRE(contains(names, "PISO"));
+}
+
+// **************************** Flow Initialization ***************************
+
+TEST_CASE("Flow-initialization selection", "[selection]")
+{
+    const NameList names = Initializer::availableTypes();
+    REQUIRE(names.size() == Count{3});
+    REQUIRE(contains(names, "Uniform"));
+    REQUIRE(contains(names, "taylorGreen"));
+    REQUIRE(contains(names, "potentialFlow"));
 }

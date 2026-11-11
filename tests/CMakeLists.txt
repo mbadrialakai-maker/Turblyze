@@ -15,7 +15,7 @@ find_package(Catch2 3 REQUIRED)
 include(Catch)
 
 # --- Shared fixture support (programmatic hex-box mesh, tolerance constants) ---
-add_library(turblyze_test_support STATIC
+add_library(turblyze_test_support OBJECT
     support/MeshFixtures.cpp
 )
 
@@ -49,9 +49,11 @@ add_executable(turblyze_unit_tests
     unit/Parallel/GlobalIndexTests.cpp
     unit/LinearSystem/Cramer4x4Tests.cpp
     unit/LinearSystem/Cramer3x3Tests.cpp
+    unit/Solver/InitializationTests.cpp
 )
 
 target_link_libraries(turblyze_unit_tests PRIVATE
+    turblyze_core
     turblyze_test_support
     Catch2::Catch2WithMain
 )
@@ -83,6 +85,7 @@ add_executable(turblyze_mpi_tests
 )
 
 target_link_libraries(turblyze_mpi_tests PRIVATE
+    turblyze_core
     turblyze_test_support
     Catch2::Catch2
 )

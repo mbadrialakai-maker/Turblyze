@@ -30,6 +30,7 @@
 
 // Project headers
 #include "kOmegaSST.h"
+#include "WALE.h"
 #include "TimeScheme.h"
 #include "GradientScheme.h"
 #include "ConvectionScheme.h"
@@ -264,5 +265,71 @@ TEST_CASE
     {
         REQUIRE(std::isfinite(value));
         REQUIRE(value >= S(0.0));
+    }
+}
+
+// ************************ LES Parallel Halo Parity **************************
+
+TEST_CASE
+(
+    "WALE solve and halo-exchange across partition cuts",
+    "[petsc][models][les]"
+)
+{
+    DecomposedBoxMesh box(3, 3, 3);
+    const BoundaryConditions bc = makeTurbulenceBoundaries(box.mesh());
+
+    const Scalar nu = S(1.0e-4);
+    const Scalar Cw = WALE::coeffs_.Cw;
+    const Scalar Ck = WALE::coeffs_.Ck;
+
+    WALE wale(box.mesh(), bc, nu, Cw, Ck);
+
+    const ScalarField Ux(box.mesh(), S(0.0));
+    const ScalarField Uy(box.mesh(), S(0.0));
+    const ScalarField Uz(box.mesh(), S(0.0));
+    const FaceFluxField flowRateFace(box.mesh(), S(0.0));
+
+    // Spatially varying plane strain on owned cells only; ghost cells stay
+    // zero in gradU so ghost nut/k_sgs can only come from Halo::exchange
+    TensorField gradU(box.mesh(), Tensor{});
+    for (Index cellIdx = 0; cellIdx < box.mesh().numDomainCells(); ++cellIdx)
+    {
+        const Scalar alpha =
+            S(1.0) + box.mesh().cells()[cellIdx].centroid().x();
+        gradU[cellIdx] = Tensor
+        (
+            alpha,   S(0.0),  S(0.0),
+            S(0.0), -alpha,   S(0.0),
+            S(0.0),  S(0.0),  S(0.0)
+        );
+    }
+
+    wale.solve(Ux, Uy, Uz, flowRateFace, gradU);
+
+    // Every owned AND ghost cell (populated via Halo::exchange in LES::solve)
+    // must match the exact single-cell analytical formula bit-for-bit
+    for (Index cellIdx = 0; cellIdx < box.mesh().numCells(); ++cellIdx)
+    {
+        const Scalar alpha =
+            S(1.0) + box.mesh().cells()[cellIdx].centroid().x();
+        const Scalar magSqrS = S(2.0) * alpha * alpha;
+        const Scalar magSqrSd = (S(2.0) / S(3.0)) * std::pow(alpha, S(4.0));
+        const Scalar expectedNut =
+            Cw * Cw * std::pow(magSqrSd, S(1.5))
+          / (std::pow(magSqrS, S(2.5)) + std::pow(magSqrSd, S(1.25)) + vSmallValue);
+        const Scalar expectedKSgs =
+            (expectedNut / Ck) * (expectedNut / Ck);
+
+        REQUIRE_THAT
+        (
+            wale.turbulentViscosity()[cellIdx],
+            WithinRel(expectedNut, TestTolerances::relTight)
+        );
+        REQUIRE_THAT
+        (
+            wale.kSgs()[cellIdx],
+            WithinRel(expectedKSgs, TestTolerances::relTight)
+        );
     }
 }
