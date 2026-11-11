@@ -40,6 +40,7 @@ add_executable(turblyze_unit_tests
     unit/Fields/FieldTests.cpp
     unit/BoundaryConditions/BoundaryTypesTests.cpp
     unit/Models/TurbulenceStaticsTests.cpp
+    unit/Models/LESModelTests.cpp
     unit/Case/CaseReaderTests.cpp
     unit/Case/RuntimeSelectionTests.cpp
     unit/Case/BoundaryFactoryTests.cpp
