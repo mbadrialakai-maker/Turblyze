@@ -30,6 +30,10 @@ void linkBoundaryFaces(FaceList& faces, const PatchList& patches);
 [[nodiscard]] Mesh create(const CaseConfiguration& config);
 
 /// Partition the master's complete mesh and rebuild this rank's submesh
-[[nodiscard]] Mesh decomposeAndDistribute(Mesh completeMesh, bool debug = false);
+[[nodiscard]] Mesh decomposeAndDistribute
+(
+    Mesh completeMesh,
+    bool debug = false
+);
 
 } // namespace MeshCreator

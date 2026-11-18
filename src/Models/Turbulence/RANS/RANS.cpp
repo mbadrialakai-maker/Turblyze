@@ -282,7 +282,11 @@ void RANS::initializeWallFunctionGeometry
         if (!face.isBoundary()) continue;
 
         const BoundaryPatch& patch = *face.patch();
-        if (patch.type() == PatchType::processor || !bcManager.boundaryType(patch, Field::Ux).isWall())
+        if
+        (
+            patch.type() == PatchType::processor
+         || !bcManager.boundaryType(patch, Field::Ux).isWall()
+        )
         {
             continue;
         }

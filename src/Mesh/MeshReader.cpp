@@ -1092,7 +1092,10 @@ void MeshReader::buildTopology()
         if (currentFace.ownerCell() < numCells)
         {
             cellFaces[currentFace.ownerCell()].push_back(faceIdx);
-            cellSigns[currentFace.ownerCell()].push_back(static_cast<std::int8_t>(1));
+            cellSigns[currentFace.ownerCell()].push_back
+            (
+                static_cast<std::int8_t>(1)
+            );
 
             // If this face has a valid neighborCell
             if

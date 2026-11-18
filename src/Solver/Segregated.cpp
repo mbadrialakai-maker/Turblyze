@@ -415,9 +415,12 @@ void Segregated::correctVelocity()
         if (face.isBoundary())
         {
             const Index owner = face.ownerCell();
-            UxAvgf_[faceIdx] = bcManager().faceValue(face, Ux()[owner], Field::Ux);
-            UyAvgf_[faceIdx] = bcManager().faceValue(face, Uy()[owner], Field::Uy);
-            UzAvgf_[faceIdx] = bcManager().faceValue(face, Uz()[owner], Field::Uz);
+            UxAvgf_[faceIdx] =
+                bcManager().faceValue(face, Ux()[owner], Field::Ux);
+            UyAvgf_[faceIdx] =
+                bcManager().faceValue(face, Uy()[owner], Field::Uy);
+            UzAvgf_[faceIdx] =
+                bcManager().faceValue(face, Uz()[owner], Field::Uz);
         }
         else
         {

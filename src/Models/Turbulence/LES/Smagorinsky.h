@@ -7,7 +7,7 @@
 
  ------------------------------------------------------------------------------
  * @file Smagorinsky.h
- * @brief Classical Smagorinsky sub-grid scale turbulence model with wall damping
+ * @brief Smagorinsky sub-grid scale turbulence model with wall damping
  *
  * @details This header defines the Smagorinsky class, which implements the
  * classical algebraic eddy-viscosity SGS model:

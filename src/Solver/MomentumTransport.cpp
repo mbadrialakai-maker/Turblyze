@@ -450,7 +450,7 @@ bool MomentumTransport::checkConvergence()
 
     if (isTransient())
     {
-        // In transient simulations, report the inherent dimensionless residuals directly.
+        // In transient simulations, report the dimensionless residuals
         converged =
             (scaledMass < tolerance_)
          && (scaledVelocity < tolerance_)
@@ -471,7 +471,7 @@ bool MomentumTransport::checkConvergence()
     }
     else
     {
-        // Steady-state simulations (e.g. SIMPLE): scale relative to the initial iteration
+        // Steady-state simulations: scale relative to the initial iteration
         if (massImbalance0_ < vSmallValue)
         {
             massImbalance0_ = massImbalance;

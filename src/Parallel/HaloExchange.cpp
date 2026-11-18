@@ -50,7 +50,10 @@ void exchangeImpl(std::initializer_list<CellData<T>*> fields)
     // Receives first: layout is [field0 cells | field1 cells | ...]
     for (Index p = 0; p < numPatches; ++p)
     {
-        recvBuffers[p].resize(numFields * g_processorPatches[p].ghostCellCount());
+        recvBuffers[p].resize
+        (
+            numFields * g_processorPatches[p].ghostCellCount()
+        );
 
         MPI_Request request = MPI_REQUEST_NULL;
         MPI_Irecv

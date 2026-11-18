@@ -368,7 +368,16 @@ BoundaryConditions load
                     value = patchBC.lookup<Scalar>("value");
                 }
 
-                registerBC(bcs, patchName, Field::omega, bcType, value, "omega");
+                registerBC
+                (
+                    bcs,
+                    patchName,
+                    Field::omega,
+                    bcType,
+                    value,
+                    "omega"
+                );
+                
                 continue;
             }
 

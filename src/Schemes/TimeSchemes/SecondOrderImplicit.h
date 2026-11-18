@@ -13,8 +13,9 @@
  * the three-time-level second-order backward differentiation formula (BDF2).
  * For a cell of volume V and time step dt, the time derivative is discretized
  * as V/dt * (1.5 * phi^{n+1} - 2.0 * phi^n + 0.5 * phi^{n-1}). It adds
- * 1.5 * V/dt to the diagonal and V/dt * (2.0 * phi^n - 0.5 * phi^{n-1}) to the
- * source. On the first time step, it starts up using first-order implicit Euler.
+ * 1.5 * V/dt to the diagonal and V/dt * (2.0 * phi^n - 0.5 * phi^{n-1}) to
+ * the source. On the first time step, it starts up using first-order
+ * implicit Euler.
  *****************************************************************************/
 
 #pragma once

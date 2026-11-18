@@ -690,7 +690,8 @@ void check(const Mesh& mesh)
      && goodQuality
     )
     {
-        std::cout << "DONE: All mesh quality metrics within acceptable ranges\n";
+        std::cout
+            << "DONE: All mesh quality metrics within acceptable ranges\n";
     }
 }
 

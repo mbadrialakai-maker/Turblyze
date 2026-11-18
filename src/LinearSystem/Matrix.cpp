@@ -258,7 +258,8 @@ void Matrix::buildMatrix(const TransportEquation& equation)
         if (face.patch() != currentPatch)
         {
             currentPatch = face.patch();
-            currentBc = &bcManager_.boundaryType(currentPatch->name(), equation.field);
+            currentBc =
+                &bcManager_.boundaryType(currentPatch->name(), equation.field);
         }
         assembleBoundaryFace(face, equation, *currentBc);
     }
