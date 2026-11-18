@@ -19,7 +19,7 @@
  * result straight into the field.
  *
  * Defaults set here can be overridden at runtime through the case file's
- * linearSolvers.petscOptions string (see PETScRuntime::insertOptions).
+ * linearSolvers.petscOptions string.
  * Each KSP reads the options database through its own equation prefix
  * (momentum_, pressure_, k_, omega_), so an option targets one solver —
  * e.g. "-pressure_pc_type icc" swaps only the pressure preconditioner

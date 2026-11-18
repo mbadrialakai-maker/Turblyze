@@ -150,7 +150,11 @@ void SolverSetup::configure
         config.time.CrankNicolsonCoeff
     );
 
-    PETScRuntime::insertOptions(config.linearSolvers.petscOptions);
+    const Name& petscOptions = config.linearSolvers.petscOptions;
+    if (!petscOptions.empty())
+    {
+        PETScErrorCheck(PetscOptionsInsertString(nullptr, petscOptions.c_str()));
+    }
 
     modules.momentumSolver =
         makeLinearSolver

@@ -323,7 +323,7 @@ void Segregated::solvePressureCorrection()
         (
             MatNullSpaceCreate
             (
-                PETScRuntime::comm(),
+                PETSC_COMM_WORLD,
                 PETSC_TRUE,
                 0,
                 nullptr,

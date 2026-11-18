@@ -15,11 +15,6 @@
  * The MPI runtime is owned by MPIRuntime (constructed first in main()),
  * so PetscInitialize attaches to the already-running MPI as a guest and
  * PetscFinalize leaves it running for MPIRuntime's destructor.
- *
- * comm() is the single source of the communicator every PETSc object is
- * created on. It returns the world communicator: on a single rank the
- * standard Mat/Vec types resolve to their sequential variants, and on
- * multiple ranks to their MPI variants, so the call sites never change.
  *****************************************************************************/
 
 #pragma once
@@ -27,6 +22,7 @@
 // ********************************** Headers *********************************
 
 // Standard library headers
+#include <string>
 #include <type_traits>
 
 // External library headers
@@ -34,7 +30,6 @@
 
 // Project headers
 #include "Scalar.h"
-#include "StringTypes.h"
 #include "ErrorHandler.h"
 
 // ************************** Build-Time Invariants ****************************
@@ -93,8 +88,11 @@ public:
 
 // ************************* Special Member Functions *************************
 
-    /// Initialize the PETSc (and MPI) runtime
-    PETScRuntime();
+    /// Initialize the PETSc runtime after MPI has been initialized
+    PETScRuntime()
+    {
+        PETScErrorCheck(PetscInitializeNoArguments());
+    }
 
     /// Copy constructor and assignment - Not copyable (owns the runtime)
     PETScRuntime(const PETScRuntime&) = delete;
@@ -105,18 +103,12 @@ public:
     PETScRuntime& operator=(PETScRuntime&&) = delete;
 
     /// Finalize the PETSc runtime
-    ~PETScRuntime() noexcept;
-
-// ***************************** Accessor Methods *****************************
-
-    /// Communicator every PETSc object is created on
-    [[nodiscard]] static MPI_Comm comm() noexcept
+    ~PETScRuntime() noexcept
     {
-        return PETSC_COMM_WORLD;
+        if (PetscFinalize() != PETSC_SUCCESS)
+        {
+            // Destructors cannot throw: report and continue shutdown
+            Warning("PetscFinalize failed");
+        }
     }
-
-// ****************************** Public Methods ******************************
-
-    /// Forward a case-file option string into the PETSc options database
-    static void insertOptions(const Name& options);
 };

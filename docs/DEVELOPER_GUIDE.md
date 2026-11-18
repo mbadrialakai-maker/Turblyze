@@ -54,7 +54,7 @@ following the OpenFOAM convention.
     `CrankNicolson.h`, `SecondOrderImplicit.h`, each reporting the d/dt contribution to the implicit
     diagonal and explicit source
 - **`src/LinearSystem/`**: algebraic system assembly and solving
-  - `PETScRuntime.h/.cpp`, `Matrix.h/.cpp`, `LinearSolvers.h/.cpp`,
+  - `PETScRuntime.h`, `Matrix.h/.cpp`, `LinearSolvers.h/.cpp`,
     `TransportEquation.h`, `Cramer3x3.h`, `Cramer4x4.h`
 - **`src/Parallel/`**: MPI runtime, mesh decomposition and inter-rank data movement
   - `MPIRuntime.h/.cpp` (RAII ownership of the MPI runtime), `Comm.h/.cpp`

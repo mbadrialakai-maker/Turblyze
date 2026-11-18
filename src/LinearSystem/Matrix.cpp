@@ -135,7 +135,7 @@ Matrix::Matrix
 
     const auto n = static_cast<PetscInt>(numDomainCells);
 
-    PETScErrorCheck(MatCreate(PETScRuntime::comm(), &matrixA_));
+    PETScErrorCheck(MatCreate(PETSC_COMM_WORLD, &matrixA_));
     PETScErrorCheck(MatSetSizes(matrixA_, n, n, PETSC_DECIDE, PETSC_DECIDE));
     PETScErrorCheck(MatSetType(matrixA_, MATAIJ));
     PETScErrorCheck
@@ -154,7 +154,7 @@ Matrix::Matrix
     vectorB_.assign(numDomainCells, S(0.0));
 
     // RHS handle wraps vectorB_ storage: staging writes are the vector
-    PETScErrorCheck(VecCreate(PETScRuntime::comm(), &rhsVec_));
+    PETScErrorCheck(VecCreate(PETSC_COMM_WORLD, &rhsVec_));
     PETScErrorCheck(VecSetSizes(rhsVec_, n, PETSC_DECIDE));
     PETScErrorCheck(VecSetType(rhsVec_, VECSTANDARD));
     PETScErrorCheck(VecPlaceArray(rhsVec_, vectorB_.data()));

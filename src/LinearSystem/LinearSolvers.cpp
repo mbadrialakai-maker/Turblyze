@@ -47,7 +47,7 @@ PetscLinearSolver::PetscLinearSolver
         maxIterations
     )
 {
-    PETScErrorCheck(KSPCreate(PETScRuntime::comm(), &ksp_));
+    PETScErrorCheck(KSPCreate(PETSC_COMM_WORLD, &ksp_));
     PETScErrorCheck(KSPSetType(ksp_, kspType));
 
     // Scope case-file petscOptions entries to this equation's solver
@@ -134,7 +134,7 @@ void PetscLinearSolver::solve
     // Solution wrapper sized on the first solve, reused afterwards
     if (solution_ == nullptr)
     {
-        PETScErrorCheck(VecCreate(PETScRuntime::comm(), &solution_));
+        PETScErrorCheck(VecCreate(PETSC_COMM_WORLD, &solution_));
         PETScErrorCheck(VecSetSizes(solution_, systemSize, PETSC_DECIDE));
         PETScErrorCheck(VecSetType(solution_, VECSTANDARD));
     }
