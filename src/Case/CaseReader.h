@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cctype>
+#include <cmath>
 #include <concepts>
 
 // Project headers
@@ -145,6 +146,11 @@ private:
             if (ec != std::errc() || ptr != value.data() + value.size())
             {
                 FatalError("Cannot convert '" + value + "' to Scalar");
+            }
+
+            if (!std::isfinite(result))
+            {
+                FatalError("Expected a finite Scalar, got '" + value + "'");
             }
 
             return result;
