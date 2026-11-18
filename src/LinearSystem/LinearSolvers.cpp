@@ -47,58 +47,58 @@ PetscLinearSolver::PetscLinearSolver
         maxIterations
     )
 {
-    CheckPETSc(KSPCreate(PETScRuntime::comm(), &ksp_));
-    CheckPETSc(KSPSetType(ksp_, kspType));
+    PETScErrorCheck(KSPCreate(PETScRuntime::comm(), &ksp_));
+    PETScErrorCheck(KSPSetType(ksp_, kspType));
 
     // Scope case-file petscOptions entries to this equation's solver
-    CheckPETSc(KSPSetOptionsPrefix(ksp_, optionsPrefix.c_str()));
+    PETScErrorCheck(KSPSetOptionsPrefix(ksp_, optionsPrefix.c_str()));
 
     // Configure the requested preconditioner
     PC pc = nullptr;
-    CheckPETSc(KSPGetPC(ksp_, &pc));
+    PETScErrorCheck(KSPGetPC(ksp_, &pc));
 
     if (LinearSolver::preconditioner() == "ILU")
     {
-        CheckPETSc(PCSetType(pc, PCBJACOBI));
+        PETScErrorCheck(PCSetType(pc, PCBJACOBI));
     }
     else if (LinearSolver::preconditioner() == "ICC")
     {
-        CheckPETSc(PCSetType(pc, PCBJACOBI));
+        PETScErrorCheck(PCSetType(pc, PCBJACOBI));
         const std::string optName =
             optionsPrefix.empty()
           ? "-sub_pc_type"
           : "-" + optionsPrefix + "sub_pc_type";
-        CheckPETSc(PetscOptionsSetValue(nullptr, optName.c_str(), "icc"));
+        PETScErrorCheck(PetscOptionsSetValue(nullptr, optName.c_str(), "icc"));
     }
     else
     {
-        CheckPETSc(PCSetType(pc, pcType));
+        PETScErrorCheck(PCSetType(pc, pcType));
         if
         (
             LinearSolver::preconditioner() == "SOR"
          || LinearSolver::preconditioner() == "GaussSeidel"
         )
         {
-            CheckPETSc(PCSORSetSymmetric(pc, SOR_LOCAL_SYMMETRIC_SWEEP));
+            PETScErrorCheck(PCSORSetSymmetric(pc, SOR_LOCAL_SYMMETRIC_SWEEP));
         }
     }
 
     // PreOnly applies the preconditioner directly without Krylov norm tracking
     if (std::string(kspType) == KSPPREONLY)
     {
-        CheckPETSc(KSPSetNormType(ksp_, KSP_NORM_NONE));
+        PETScErrorCheck(KSPSetNormType(ksp_, KSP_NORM_NONE));
     }
     else
     {
         // Converge on the true residual |r|/|b|, matching the diagnostics
-        CheckPETSc(KSPSetNormType(ksp_, KSP_NORM_UNPRECONDITIONED));
+        PETScErrorCheck(KSPSetNormType(ksp_, KSP_NORM_UNPRECONDITIONED));
     }
 
     // The current field values seed the Krylov iteration
-    CheckPETSc(KSPSetInitialGuessNonzero(ksp_, PETSC_TRUE));
+    PETScErrorCheck(KSPSetInitialGuessNonzero(ksp_, PETSC_TRUE));
 
     // Apply any case-file petscOptions overrides last
-    CheckPETSc(KSPSetFromOptions(ksp_));
+    PETScErrorCheck(KSPSetFromOptions(ksp_));
 }
 
 
@@ -124,7 +124,7 @@ void PetscLinearSolver::solve
 )
 {
     PetscInt systemSize = 0;
-    CheckPETSc(VecGetLocalSize(b, &systemSize));
+    PETScErrorCheck(VecGetLocalSize(b, &systemSize));
 
     if (static_cast<Count>(systemSize) != x.size())
     {
@@ -134,17 +134,17 @@ void PetscLinearSolver::solve
     // Solution wrapper sized on the first solve, reused afterwards
     if (solution_ == nullptr)
     {
-        CheckPETSc(VecCreate(PETScRuntime::comm(), &solution_));
-        CheckPETSc(VecSetSizes(solution_, systemSize, PETSC_DECIDE));
-        CheckPETSc(VecSetType(solution_, VECSTANDARD));
+        PETScErrorCheck(VecCreate(PETScRuntime::comm(), &solution_));
+        PETScErrorCheck(VecSetSizes(solution_, systemSize, PETSC_DECIDE));
+        PETScErrorCheck(VecSetType(solution_, VECSTANDARD));
     }
 
     // Keep the previous iterate for the non-finite rollback guard
     previousSolution_.assign(x.begin(), x.end());
 
-    CheckPETSc(KSPSetOperators(ksp_, A, A));
+    PETScErrorCheck(KSPSetOperators(ksp_, A, A));
 
-    CheckPETSc
+    PETScErrorCheck
     (
         KSPSetTolerances
         (
@@ -157,12 +157,12 @@ void PetscLinearSolver::solve
     );
 
     PetscReal normB = S(0.0);
-    CheckPETSc(VecNorm(b, NORM_2, &normB));
+    PETScErrorCheck(VecNorm(b, NORM_2, &normB));
 
     // Zero-copy solve: the KSP writes straight into the caller's field
-    CheckPETSc(VecPlaceArray(solution_, x.data()));
-    CheckPETSc(KSPSolve(ksp_, b, solution_));
-    CheckPETSc(VecResetArray(solution_));
+    PETScErrorCheck(VecPlaceArray(solution_, x.data()));
+    PETScErrorCheck(KSPSolve(ksp_, b, solution_));
+    PETScErrorCheck(VecResetArray(solution_));
 
     bool finite = true;
     for (const Scalar value : x)
@@ -193,13 +193,13 @@ void PetscLinearSolver::solve
     }
 
     PetscInt iterations = 0;
-    CheckPETSc(KSPGetIterationNumber(ksp_, &iterations));
+    PETScErrorCheck(KSPGetIterationNumber(ksp_, &iterations));
 
     PetscReal residualNorm = S(0.0);
-    CheckPETSc(KSPGetResidualNorm(ksp_, &residualNorm));
+    PETScErrorCheck(KSPGetResidualNorm(ksp_, &residualNorm));
 
     KSPConvergedReason reason = KSP_CONVERGED_ITERATING;
-    CheckPETSc(KSPGetConvergedReason(ksp_, &reason));
+    PETScErrorCheck(KSPGetConvergedReason(ksp_, &reason));
 
     const SolvePerformance performance
     {

@@ -135,10 +135,10 @@ Matrix::Matrix
 
     const auto n = static_cast<PetscInt>(numDomainCells);
 
-    CheckPETSc(MatCreate(PETScRuntime::comm(), &matrixA_));
-    CheckPETSc(MatSetSizes(matrixA_, n, n, PETSC_DECIDE, PETSC_DECIDE));
-    CheckPETSc(MatSetType(matrixA_, MATAIJ));
-    CheckPETSc
+    PETScErrorCheck(MatCreate(PETScRuntime::comm(), &matrixA_));
+    PETScErrorCheck(MatSetSizes(matrixA_, n, n, PETSC_DECIDE, PETSC_DECIDE));
+    PETScErrorCheck(MatSetType(matrixA_, MATAIJ));
+    PETScErrorCheck
     (
         MatSetPreallocationCOO
         (
@@ -154,10 +154,10 @@ Matrix::Matrix
     vectorB_.assign(numDomainCells, S(0.0));
 
     // RHS handle wraps vectorB_ storage: staging writes are the vector
-    CheckPETSc(VecCreate(PETScRuntime::comm(), &rhsVec_));
-    CheckPETSc(VecSetSizes(rhsVec_, n, PETSC_DECIDE));
-    CheckPETSc(VecSetType(rhsVec_, VECSTANDARD));
-    CheckPETSc(VecPlaceArray(rhsVec_, vectorB_.data()));
+    PETScErrorCheck(VecCreate(PETScRuntime::comm(), &rhsVec_));
+    PETScErrorCheck(VecSetSizes(rhsVec_, n, PETSC_DECIDE));
+    PETScErrorCheck(VecSetType(rhsVec_, VECSTANDARD));
+    PETScErrorCheck(VecPlaceArray(rhsVec_, vectorB_.data()));
 }
 
 
@@ -405,11 +405,14 @@ void Matrix::setValues
 
 void Matrix::assemble()
 {
-    CheckPETSc(MatSetValuesCOO(matrixA_, cooValues_.data(), INSERT_VALUES));
+    PETScErrorCheck
+    (
+        MatSetValuesCOO(matrixA_, cooValues_.data(),INSERT_VALUES)
+    );
 
     PetscScalar* rhsArray = nullptr;
-    CheckPETSc(VecGetArray(rhsVec_, &rhsArray));
-    CheckPETSc(VecRestoreArray(rhsVec_, &rhsArray));
+    PETScErrorCheck(VecGetArray(rhsVec_, &rhsArray));
+    PETScErrorCheck(VecRestoreArray(rhsVec_, &rhsArray));
 }
 
 

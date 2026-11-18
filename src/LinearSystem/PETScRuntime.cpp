@@ -19,7 +19,7 @@
 
 PETScRuntime::PETScRuntime()
 {
-    CheckPETSc(PetscInitializeNoArguments());
+    PETScErrorCheck(PetscInitializeNoArguments());
 }
 
 
@@ -41,5 +41,5 @@ void PETScRuntime::insertOptions(const Name& options)
         return;
     }
 
-    CheckPETSc(PetscOptionsInsertString(nullptr, options.c_str()));
+    PETScErrorCheck(PetscOptionsInsertString(nullptr, options.c_str()));
 }

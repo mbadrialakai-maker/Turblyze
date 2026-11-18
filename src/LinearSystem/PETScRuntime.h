@@ -63,22 +63,27 @@ static_assert
 #define PETSC_SUCCESS 0
 #endif
 
-// ******************************** CheckPETSc ********************************
+// ****************************** PETScErrorCheck *****************************
 
-/// Verify a PETSc call, aborting with a FatalError on failure
-#define CheckPETSc(call)                                                      \
-    do                                                                        \
-    {                                                                         \
-        const PetscErrorCode petscErrorCode = (call);                         \
-        if (petscErrorCode != PETSC_SUCCESS)                                  \
-        {                                                                     \
-            FatalError                                                        \
-            (                                                                 \
-                "PETSc error " + std::to_string(petscErrorCode)               \
-              + " in '" + #call + "'"                                         \
-            );                                                                \
-        }                                                                     \
-    } while (false)
+/// Verify a PETSc call has no errors, aborting with a FatalError on failure
+#define PETScErrorCheck(call) { PETScAssert((call), #call); }
+
+inline void PETScAssert
+(
+    PetscErrorCode errorCode,
+    const char* call,
+    Location location = Location::current()
+)
+{
+    if (errorCode != PETSC_SUCCESS)
+    {
+        FatalError
+        (
+            "PETSc error " + std::to_string(errorCode)
+          + " in '" + call + "'", location
+        );
+    }
+}
 
 // **************************** class PETScRuntime ****************************
 
