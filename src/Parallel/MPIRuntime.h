@@ -21,6 +21,14 @@
 
 #pragma once
 
+// ********************************** Headers *********************************
+
+// External library headers
+#include <mpi.h>
+
+// Project headers
+#include "Comm.h"
+
 // **************************** class MPIRuntime ******************************
 
 class MPIRuntime
@@ -30,7 +38,11 @@ public:
 // ************************* Special Member Functions *************************
 
     /// Initialize the MPI runtime and cache this rank's identity
-    MPIRuntime();
+    MPIRuntime()
+    {
+        MPI_Init(nullptr, nullptr);
+        Comm::init();
+    }
 
     /// Copy constructor and assignment - Not copyable (owns the runtime)
     MPIRuntime(const MPIRuntime&) = delete;
@@ -41,5 +53,8 @@ public:
     MPIRuntime& operator=(MPIRuntime&&) = delete;
 
     /// Finalize the MPI runtime
-    ~MPIRuntime() noexcept;
+    ~MPIRuntime() noexcept
+    {
+        MPI_Finalize();
+    }
 };

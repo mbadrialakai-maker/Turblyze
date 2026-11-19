@@ -57,7 +57,7 @@ following the OpenFOAM convention.
   - `PETScRuntime.h`, `Matrix.h/.cpp`, `LinearSolvers.h/.cpp`,
     `TransportEquation.h`, `Cramer3x3.h`, `Cramer4x4.h`
 - **`src/Parallel/`**: MPI runtime, mesh decomposition and inter-rank data movement
-  - `MPIRuntime.h/.cpp` (RAII ownership of the MPI runtime), `Comm.h/.cpp`
+  - `MPIRuntime.h` (RAII ownership of the MPI runtime), `Comm.h/.cpp`
     (rank identity), `Reduce.h/.cpp` (global reductions),
     `MPIScalarType.h`
   - `MeshDecomposer.h/.cpp` (METIS partitioning into per-rank submeshes),

@@ -97,7 +97,6 @@ add_library(turblyze_core OBJECT
     src/Schemes/TimeSchemes/TimeScheme.cpp
     src/LinearSystem/Matrix.cpp
     src/LinearSystem/LinearSolvers.cpp
-    src/Parallel/MPIRuntime.cpp
     src/Parallel/Comm.cpp
     src/Parallel/Reduce.cpp
     src/Parallel/GlobalIndex.cpp
