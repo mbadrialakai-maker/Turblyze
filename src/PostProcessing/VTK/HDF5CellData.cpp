@@ -560,7 +560,12 @@ void HDF5CellData::appendTimeStep
         );
     }
 
-    appendStepBookkeeping(time);
+    HDF5::appendStaticGeometryStep
+    (
+        stepsGroup_,
+        static_cast<double>(time),
+        HDF5::GridType::unstructuredGrid
+    );
     ++stepCount_;
 
     // Refresh NSteps, then release the file until the next write
@@ -689,123 +694,6 @@ void HDF5CellData::checkFieldConsistency
           + "' changed component count between time steps."
         );
     }
-}
-
-
-void HDF5CellData::appendStepBookkeeping(Scalar time)
-{
-    const double timeValue = static_cast<double>(time);
-    const long long zero = 0;
-    const long long numParts = static_cast<long long>(Comm::numProcessors());
-
-    // Identical on every rank: the master writes, the others just join
-    const HDF5::SlabLayout oneRow = HDF5::replicatedRows(1);
-
-    HDF5::appendRows
-    (
-        stepsGroup_,
-        "Values",
-        H5T_IEEE_F64LE,
-        H5T_NATIVE_DOUBLE,
-        &timeValue,
-        oneRow,
-        0,
-        HDF5::stepChunkRows
-    );
-
-    // Static geometry: every step re-reads all parts from offset zero
-    HDF5::appendRows
-    (
-        stepsGroup_,
-        "PartOffsets",
-        H5T_STD_I64LE,
-        H5T_NATIVE_LLONG,
-        &zero,
-        oneRow,
-        0,
-        HDF5::stepChunkRows
-    );
-    HDF5::appendRows
-    (
-        stepsGroup_,
-        "NumberOfParts",
-        H5T_STD_I64LE,
-        H5T_NATIVE_LLONG,
-        &numParts,
-        oneRow,
-        0,
-        HDF5::stepChunkRows
-    );
-    HDF5::appendRows
-    (
-        stepsGroup_,
-        "PointOffsets",
-        H5T_STD_I64LE,
-        H5T_NATIVE_LLONG,
-        &zero,
-        oneRow,
-        0,
-        HDF5::stepChunkRows
-    );
-
-    // [NSteps, 1]: one topology for an UnstructuredGrid
-    HDF5::appendRows
-    (
-        stepsGroup_,
-        "CellOffsets",
-        H5T_STD_I64LE,
-        H5T_NATIVE_LLONG,
-        &zero,
-        oneRow,
-        1,
-        HDF5::stepChunkRows
-    );
-    HDF5::appendRows
-    (
-        stepsGroup_,
-        "ConnectivityIdOffsets",
-        H5T_STD_I64LE,
-        H5T_NATIVE_LLONG,
-        &zero,
-        oneRow,
-        1,
-        HDF5::stepChunkRows
-    );
-
-    // Polyhedron step offsets, likewise all zero
-    HDF5::appendRows
-    (
-        stepsGroup_,
-        "FaceConnectivityOffsets",
-        H5T_STD_I64LE,
-        H5T_NATIVE_LLONG,
-        &zero,
-        oneRow,
-        0,
-        HDF5::stepChunkRows
-    );
-    HDF5::appendRows
-    (
-        stepsGroup_,
-        "FaceOffsetsOffsets",
-        H5T_STD_I64LE,
-        H5T_NATIVE_LLONG,
-        &zero,
-        oneRow,
-        0,
-        HDF5::stepChunkRows
-    );
-    HDF5::appendRows
-    (
-        stepsGroup_,
-        "PolyhedronToFaceIdOffsets",
-        H5T_STD_I64LE,
-        H5T_NATIVE_LLONG,
-        &zero,
-        oneRow,
-        0,
-        HDF5::stepChunkRows
-    );
 }
 
 } // namespace VTK

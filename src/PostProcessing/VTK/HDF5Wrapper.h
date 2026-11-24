@@ -46,6 +46,14 @@
 namespace VTK::HDF5
 {
 
+// **************************** enum class GridType ***************************
+
+enum class GridType
+{
+    unstructuredGrid,
+    polyData
+};
+
 // ******************************** Constants *********************************
 
 /// Gzip compression level applied to chunked datasets (serial runs only)
@@ -168,6 +176,16 @@ void appendRows
     const SlabLayout& rows,
     hsize_t columns,
     hsize_t chunkRows
+);
+
+// **************************** Time Step Functions ***************************
+
+/// Collectively append time and geometry offsets for one static-mesh step
+void appendStaticGeometryStep
+(
+    hid_t stepsGroup,
+    double time,
+    GridType gridType
 );
 
 } // namespace VTK::HDF5

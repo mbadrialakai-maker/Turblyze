@@ -660,4 +660,66 @@ void appendRows
     writeSlab(dataset.get(), memType, rows, columns, current[0], data, what);
 }
 
+// **************************** Time Step Functions ***************************
+
+void appendStaticGeometryStep
+(
+    hid_t stepsGroup,
+    double time,
+    GridType gridType
+)
+{
+    const SlabLayout oneRow = replicatedRows(1);
+    appendRows
+    (
+        stepsGroup,
+        "Values",
+        H5T_IEEE_F64LE,
+        H5T_NATIVE_DOUBLE,
+        &time,
+        oneRow,
+        0,
+        stepChunkRows
+    );
+
+    const auto appendIntegerRow = [stepsGroup, &oneRow]
+    (
+        const char* name,
+        const long long* values,
+        hsize_t columns
+    )
+    {
+        appendRows
+        (
+            stepsGroup,
+            name,
+            H5T_STD_I64LE,
+            H5T_NATIVE_LLONG,
+            values,
+            oneRow,
+            columns,
+            stepChunkRows
+        );
+    };
+
+    const long long numParts = static_cast<long long>(Comm::numProcessors());
+    // Each step references the static geometry at offset zero
+    const long long zeroOffsets[4] = {};
+    appendIntegerRow("PartOffsets", zeroOffsets, 0);
+    appendIntegerRow("NumberOfParts", &numParts, 0);
+    appendIntegerRow("PointOffsets", zeroOffsets, 0);
+
+    // Topology offsets are two-dimensional even for a single topology
+    const hsize_t topologyColumns = gridType == GridType::polyData ? 4 : 1;
+    appendIntegerRow("CellOffsets", zeroOffsets, topologyColumns);
+    appendIntegerRow("ConnectivityIdOffsets", zeroOffsets, topologyColumns);
+
+    if (gridType == GridType::unstructuredGrid)
+    {
+        appendIntegerRow("FaceConnectivityOffsets", zeroOffsets, 0);
+        appendIntegerRow("FaceOffsetsOffsets", zeroOffsets, 0);
+        appendIntegerRow("PolyhedronToFaceIdOffsets", zeroOffsets, 0);
+    }
+}
+
 } // namespace VTK::HDF5

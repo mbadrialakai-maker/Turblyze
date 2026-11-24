@@ -124,9 +124,6 @@ private:
     /// Register (first step) or check (later steps) an array name
     void checkFieldConsistency(const Name& name);
 
-    /// Append the per-step time value and all-zero geometry offset rows
-    void appendStepBookkeeping(Scalar time);
-
 // ****************************** Private Members *****************************
 
     /// Non-owning mesh reference
