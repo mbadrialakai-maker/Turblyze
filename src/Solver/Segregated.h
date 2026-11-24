@@ -31,10 +31,6 @@
 #include "LinearSolvers.h"
 #include "TransportEquation.h"
 
-// *************************** Forward Declarations ***************************
-
-class Initializer;
-
 // ***************************** class Segregated *****************************
 
 class Segregated : public MomentumTransport
@@ -46,25 +42,8 @@ public:
     /// Constructor
     Segregated
     (
-        const Mesh& mesh,
-        BoundaryConditions& bc,
-        const TimeScheme& timeScheme,
-        const GradientScheme& gradScheme,
-        const ConvectionScheme& momentumConvectionScheme,
-        LinearSolver& momentumSolver,
-        LinearSolver& pressureSolver,
-        TurbulenceModel& turbulence,
-        const Initializer& initializer,
-        Scalar deltaT,
-        Scalar rho,
-        Scalar mu,
-        Scalar alphaU,
-        Scalar alphaP,
-        Count maxIterations,
-        Scalar convergenceTolerance,
-        Count nNonOrthogonalCorrectors,
-        Count nOuterCorrectors,
-        bool debug
+        const CaseConfiguration& config,
+        const MomentumDependencies& dependencies
     );
 
     /// Copy constructor and assignment - Not copyable (const T& members)

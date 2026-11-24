@@ -21,6 +21,7 @@
 #include <algorithm>
 
 // Project headers
+#include "CaseConfiguration.h"
 #include "Scalar.h"
 #include "HaloExchange.h"
 #include "PETScRuntime.h"
@@ -34,62 +35,30 @@
 
 Segregated::Segregated
 (
-    const Mesh& mesh,
-    BoundaryConditions& bc,
-    const TimeScheme& timeScheme,
-    const GradientScheme& gradScheme,
-    const ConvectionScheme& momentumConvectionScheme,
-    LinearSolver& momentumSolver,
-    LinearSolver& pressureSolver,
-    TurbulenceModel& turbulence,
-    const Initializer& initializer,
-    Scalar deltaT,
-    Scalar rho,
-    Scalar mu,
-    Scalar alphaU,
-    Scalar alphaP,
-    Count maxIterations,
-    Scalar convergenceTolerance,
-    Count nNonOrthogonalCorrectors,
-    Count nOuterCorrectors,
-    bool debug
+    const CaseConfiguration& config,
+    const MomentumDependencies& dependencies
 )
 :
-    MomentumTransport
-    {
-        mesh,
-        bc,
-        timeScheme,
-        gradScheme,
-        turbulence,
-        initializer,
-        deltaT,
-        rho,
-        mu,
-        maxIterations,
-        convergenceTolerance,
-        nOuterCorrectors,
-        debug
-    },
-    momentumConvectionScheme_{momentumConvectionScheme},
-    momentumSolver_{momentumSolver},
-    pressureSolver_{pressureSolver},
-    matrixConstruct_{mesh, bc},
-    alphaU_{alphaU},
-    alphaP_{alphaP},
-    nNonOrthogonalCorrectors_{nNonOrthogonalCorrectors}
+    MomentumTransport{config, dependencies},
+    momentumConvectionScheme_{dependencies.momentumConvectionScheme},
+    momentumSolver_{dependencies.momentumSolver},
+    pressureSolver_{dependencies.pressureSolver},
+    matrixConstruct_{mesh_, bcManager_},
+    alphaU_{config.alphaU},
+    alphaP_{config.alphaP},
+    nNonOrthogonalCorrectors_{config.nNonOrthogonalCorrectors}
 {
     // No Dirichlet anchor on ANY rank leaves p' with a constant null space
     Count fixedPressurePatches = 0;
 
-    for (const BoundaryPatch& patch : mesh.patches())
+    for (const BoundaryPatch& patch : mesh_.patches())
     {
         if (patch.type() == PatchType::processor)
         {
             continue;
         }
 
-        if (bc.boundaryType(patch.name(), Field::p).fixesValue())
+        if (bcManager_.boundaryType(patch.name(), Field::p).fixesValue())
         {
             ++fixedPressurePatches;
         }

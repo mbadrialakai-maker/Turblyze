@@ -20,10 +20,6 @@
 
 #include "Segregated.h"
 
-// *************************** Forward Declarations ***************************
-
-class Initializer;
-
 // ******************************* class SIMPLE *******************************
 
 class SIMPLE final : public Segregated
@@ -32,29 +28,8 @@ public:
 
 // ************************* Special Member Functions *************************
 
-    /// Constructor
-    SIMPLE
-    (
-        const Mesh& mesh,
-        BoundaryConditions& bc,
-        const TimeScheme& timeScheme,
-        const GradientScheme& gradScheme,
-        const ConvectionScheme& momentumConvectionScheme,
-        LinearSolver& momentumSolver,
-        LinearSolver& pressureSolver,
-        TurbulenceModel& turbulence,
-        const Initializer& initializer,
-        Scalar deltaT,
-        Scalar rho,
-        Scalar mu,
-        Scalar alphaU,
-        Scalar alphaP,
-        Count maxIterations,
-        Scalar convergenceTolerance,
-        Count nNonOrthogonalCorrectors,
-        Count nOuterCorrectors,
-        bool debug
-    );
+    /// Use the segregated solver constructor
+    using Segregated::Segregated;
 
     /// Copy constructor and assignment - Not copyable (const T& members)
     SIMPLE(const SIMPLE&) = delete;

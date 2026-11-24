@@ -40,6 +40,24 @@ class TimeScheme;
 class ConvectionScheme;
 class LinearSolver;
 class Initializer;
+struct CaseConfiguration;
+
+// ************************ struct MomentumDependencies ***********************
+
+struct MomentumDependencies
+{
+    const Mesh& mesh;
+    BoundaryConditions& bc;
+    const TimeScheme& timeScheme;
+    const GradientScheme& gradScheme;
+    const ConvectionScheme& momentumConvectionScheme;
+    LinearSolver& momentumSolver;
+    LinearSolver& pressureSolver;
+    TurbulenceModel& turbulence;
+
+    /// Used to initialize the solution fields during construction
+    const Initializer& initializer;
+};
 
 // *************************** struct TransientFields *************************
 
@@ -77,19 +95,8 @@ public:
     /// Constructor
     MomentumTransport
     (
-        const Mesh& mesh,
-        BoundaryConditions& bc,
-        const TimeScheme& timeScheme,
-        const GradientScheme& gradScheme,
-        TurbulenceModel& turbulence,
-        const Initializer& initializer,
-        Scalar deltaT,
-        Scalar rho,
-        Scalar mu,
-        Count maxIterations,
-        Scalar convergenceTolerance,
-        Count nOuterCorrectors,
-        bool debug
+        const CaseConfiguration& config,
+        const MomentumDependencies& dependencies
     );
 
     /// Copy constructor and assignment - Not copyable (const T& members)
@@ -105,30 +112,11 @@ public:
 
 // **************************** Runtime Selection *****************************
 
-    /// Construct the momentum transport algorithm selected by name
+    /// Construct the algorithm selected by the case configuration
     [[nodiscard]] static std::unique_ptr<MomentumTransport> create
     (
-        const Name& algorithm,
-        const Mesh& mesh,
-        BoundaryConditions& bc,
-        const TimeScheme& timeScheme,
-        const GradientScheme& gradScheme,
-        const ConvectionScheme& momentumConvectionScheme,
-        LinearSolver& momentumSolver,
-        LinearSolver& pressureSolver,
-        TurbulenceModel& turbulence,
-        const Initializer& initializer,
-        Scalar deltaT,
-        Scalar rho,
-        Scalar mu,
-        Scalar alphaU,
-        Scalar alphaP,
-        Count maxIterations,
-        Scalar convergenceTolerance,
-        Count nNonOrthogonalCorrectors,
-        Count nOuterCorrectors,
-        Count nPrimeCorrectors,
-        bool debug
+        const CaseConfiguration& config,
+        const MomentumDependencies& dependencies
     );
 
     /// Names of every selectable momentum transport algorithm

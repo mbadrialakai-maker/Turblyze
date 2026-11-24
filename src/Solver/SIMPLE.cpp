@@ -15,55 +15,6 @@
 // Implementation header
 #include "SIMPLE.h"
 
-// ************************* Special Member Functions *************************
-
-SIMPLE::SIMPLE
-(
-    const Mesh& mesh,
-    BoundaryConditions& bc,
-    const TimeScheme& timeScheme,
-    const GradientScheme& gradScheme,
-    const ConvectionScheme& momentumConvectionScheme,
-    LinearSolver& momentumSolver,
-    LinearSolver& pressureSolver,
-    TurbulenceModel& turbulence,
-    const Initializer& initializer,
-    Scalar deltaT,
-    Scalar rho,
-    Scalar mu,
-    Scalar alphaU,
-    Scalar alphaP,
-    Count maxIterations,
-    Scalar convergenceTolerance,
-    Count nNonOrthogonalCorrectors,
-    Count nOuterCorrectors,
-    bool debug
-)
-:
-    Segregated
-    {
-        mesh,
-        bc,
-        timeScheme,
-        gradScheme,
-        momentumConvectionScheme,
-        momentumSolver,
-        pressureSolver,
-        turbulence,
-        initializer,
-        deltaT,
-        rho,
-        mu,
-        alphaU,
-        alphaP,
-        maxIterations,
-        convergenceTolerance,
-        nNonOrthogonalCorrectors,
-        nOuterCorrectors,
-        debug
-    }
-{}
-
 // ******************************* SIMPLE Solve *******************************
 
 bool SIMPLE::outerIteration

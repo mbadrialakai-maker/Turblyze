@@ -19,6 +19,7 @@
 #include <utility>
 
 // Project headers
+#include "CaseConfiguration.h"
 #include "GradientScheme.h"
 #include "HaloExchange.h"
 
@@ -26,51 +27,12 @@
 
 PISO::PISO
 (
-    const Mesh& mesh,
-    BoundaryConditions& bc,
-    const TimeScheme& timeScheme,
-    const GradientScheme& gradScheme,
-    const ConvectionScheme& momentumConvectionScheme,
-    LinearSolver& momentumSolver,
-    LinearSolver& pressureSolver,
-    TurbulenceModel& turbulence,
-    const Initializer& initializer,
-    Scalar deltaT,
-    Scalar rho,
-    Scalar mu,
-    Scalar alphaU,
-    Scalar alphaP,
-    Count maxIterations,
-    Scalar convergenceTolerance,
-    Count nNonOrthogonalCorrectors,
-    Count nOuterCorrectors,
-    Count nPrimeCorrectors,
-    bool debug
+    const CaseConfiguration& config,
+    const MomentumDependencies& dependencies
 )
 :
-    Segregated
-    {
-        mesh,
-        bc,
-        timeScheme,
-        gradScheme,
-        momentumConvectionScheme,
-        momentumSolver,
-        pressureSolver,
-        turbulence,
-        initializer,
-        deltaT,
-        rho,
-        mu,
-        alphaU,
-        alphaP,
-        maxIterations,
-        convergenceTolerance,
-        nNonOrthogonalCorrectors,
-        nOuterCorrectors,
-        debug
-    },
-    nPrimeCorrectors_{nPrimeCorrectors}
+    Segregated{config, dependencies},
+    nPrimeCorrectors_{config.nPrimeCorrectors}
 {}
 
 // ******************************** PISO Solve ********************************

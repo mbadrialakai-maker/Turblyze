@@ -242,35 +242,23 @@ void SolverSetup::configure
             *modules.pressureSolver
         );
 
-    modules.solver =
-        MomentumTransport::create
+    const MomentumDependencies dependencies
+    {
+        .mesh = mesh,
+        .bc = boundaryConditions,
+        .timeScheme = *modules.timeScheme,
+        .gradScheme = *modules.gradScheme,
+        .momentumConvectionScheme = resolveConvectionScheme
         (
-            config.algorithm,
-            mesh,
-            boundaryConditions,
-            *modules.timeScheme,
-            *modules.gradScheme,
-            resolveConvectionScheme
-            (
-                modules.momentumConvectionScheme,
-                *modules.defaultConvectionScheme
-            ),
-            *modules.momentumSolver,
-            *modules.pressureSolver,
-            *modules.turbulenceModel,
-            *initializer,
-            config.time.timeStep,
-            config.rho,
-            config.mu,
-            config.alphaU,
-            config.alphaP,
-            config.maxIterations,
-            config.convergenceTolerance,
-            config.nNonOrthogonalCorrectors,
-            config.time.nOuterCorrectors,
-            config.nPrimeCorrectors,
-            config.debug
-        );
+            modules.momentumConvectionScheme,
+            *modules.defaultConvectionScheme
+        ),
+        .momentumSolver = *modules.momentumSolver,
+        .pressureSolver = *modules.pressureSolver,
+        .turbulence = *modules.turbulenceModel,
+        .initializer = *initializer
+    };
+    modules.solver = MomentumTransport::create(config, dependencies);
 }
 
 

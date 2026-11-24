@@ -482,9 +482,16 @@ Initial velocity and pressure fields are populated inside `MomentumTransport`'s 
 - `TaylorGreen` (`TaylorGreen.h/.cpp`): evaluates the analytical 3D Taylor–Green vortex velocity and pressure at cell centroids and exchanges halos.
 - `PotentialFlow` (`PotentialFlow.h/.cpp`): initializes freestream velocity $\mathbf{U}_\infty$, solves the potential-flow Poisson projection $\nabla^2 \phi = \nabla \cdot \mathbf{U}_\infty$ for `1 + nNonOrthogonalCorrectors` passes using the pressure `LinearSolver`, projects a divergence-free wall-tangent velocity $\mathbf{U} = \mathbf{U}_\infty - \nabla \phi$, sets Bernoulli pressure $p = p_\infty + \frac{1}{2}\rho(U_\infty^2 - |\mathbf{U}|^2)$, and exchanges halos.
 
-Controls and setup:
-- `SIMPLE` and `PISO` are fully initialized by their constructors through `MomentumTransport::create(...)`. Runtime controls (rho, mu, under-relaxation factors, tolerances, time-step controls, debug flag), the `Initializer&`, and the two linear solvers (`momentum`, `pressure`) are passed directly as constructor parameters.
-- Turbulence is **not owned by `MomentumTransport`**. `SolverModules` owns `unique_ptr<TurbulenceModel>` as a sibling of `solver` and constructs it *before* the flow solver. A non-owning `TurbulenceModel&` is passed as the final constructor argument to `MomentumTransport::create()`; it is always valid (`Laminar` null-object for laminar runs).
+**Controls and setup**
+
+- `MomentumTransport::create(config, dependencies)` selects SIMPLE or PISO from
+  `config.algorithm`. Each constructor reads its controls from the validated
+  `CaseConfiguration`. For example, `Segregated` reads the velocity and pressure
+  relaxation factors and `PISO` reads `config.nPrimeCorrectors`.
+- `SolverSetup::configure()` builds a local `MomentumDependencies` with references
+  to the mesh, boundary conditions, schemes, linear solvers, turbulence model,
+  and initializer. The solver retains the runtime references it uses during the
+  solve. The initializer is used only to populate the initial fields.
 - `CaseConfig::loadConfiguration()` parses non-BC runtime input into `CaseConfiguration`. `SolverSetup::configure()` constructs the gradient and convection schemes, the time scheme (`TimeScheme::create`), inserts optional `petscOptions` into the PETSc options database, constructs the linear solvers (`momentumSolver`, `pressureSolver`, and for RANS `kSolver`/`omegaSolver`), constructs the turbulence model (`TurbulenceModel::create` for `kOmegaSST`, `LES::create` for `Smagorinsky`/`WALE`, or `Laminar`), constructs a local flow `Initializer` (`Initializer::create`), and finally constructs `modules.solver` (`MomentumTransport::create`) last so it is destroyed first.
 
 ### Transient (URANS / LES) solve
@@ -970,7 +977,7 @@ so no file outside `src/BoundaryConditions/` changes.
    `algorithmName()`. A `Segregated`-derived algorithm inherits `faceMassFlux()`
    and `pressureResidual()` from `Segregated`; a family deriving straight from
    `MomentumTransport` must implement those two hooks itself.
-3) Add a matching `if (algorithm == "...")` branch to
+3) Add a matching `if (config.algorithm == "...")` branch to
    `MomentumTransport::create()` AND the case-file name to
    `MomentumTransport::availableAlgorithms()` (both in
    `src/Solver/MomentumTransport.cpp`); the parser validates
@@ -982,15 +989,16 @@ so no file outside `src/BoundaryConditions/` changes.
    that section in `docs/CASE.md`.
 
 ### Expose new solver or model parameters
+
 - Add the case entry to `defaultCase` and document it in `docs/CASE.md`.
 - Parse and validate the value in `CaseConfig::loadConfiguration()` and add a field
   to `CaseConfiguration`.
-- Add a new parameter to the `MomentumTransport`/`SIMPLE`/`PISO` or turbulence
-  model constructor (each parameter on its own line per `docs/STYLE.md`), forward
-  it from `SolverSetup::configure()`, and store it as a member.
-- Keep user-selected services such as linear solvers, gradient schemes,
-  convection schemes, and time schemes owned by `SolverModules`; pass non-owning
-  references to `MomentumTransport::create()` or to model constructors.
+- For a momentum-solver control, read the validated field in the constructor
+  that uses it. For a turbulence-model parameter, forward the value through the
+  model's existing construction path in `SolverSetup::configure()`.
+- `SolverModules` owns the selected schemes, linear solvers, and turbulence
+  model. Pass any new runtime dependency that the flow solver borrows through
+  a named reference in `MomentumDependencies`.
 
 
 ## Testing and Debugging
@@ -1169,35 +1177,23 @@ output { filename string; debug bool; }
 ```
 
 ### Adding New Case Parameters
-1. Add entry to appropriate section in `defaultCase`
-2. Read and validate it in `CaseConfig::loadConfiguration()`
-3. If the value belongs to a solver/model, add it to `CaseConfiguration` and the
-   corresponding constructor
-4. Forward it in `SolverSetup::configure()`
 
-Example:
+Add the entry to the appropriate section in `defaultCase` and document it in
+`docs/CASE.md`. Store the parsed value in `CaseConfiguration` and validate it
+when reading the case. For example, `readPisoControls()` reads
+`PISO.nPrimeCorrectors` and checks that it is positive. The algorithm then
+reads that value during construction.
+
 ```cpp
-// In defaultCase
-SIMPLE
-{
-    newParameter    0.5;    // New parameter
-}
-
-// In CaseConfig::loadConfiguration()
-const auto& simple = reader.section("SIMPLE");
-config.newParameter = simple.lookupOrDefault<Scalar>("newParameter", S(0.5));
-
-// In SolverSetup::configure(), forward into MomentumTransport::create
-// (one parameter per line, after adding the matching constructor param and
-//  member to MomentumTransport / SIMPLE):
-modules.solver =
-    MomentumTransport::create
-    (
-        config.algorithm,
-        // ...existing args...
-        config.newParameter,
-        // ...remaining args...
-    );
+PISO::PISO
+(
+    const CaseConfiguration& config,
+    const MomentumDependencies& dependencies
+)
+:
+    Segregated{config, dependencies},
+    nPrimeCorrectors_{config.nPrimeCorrectors}
+{}
 ```
 
 ### Error Handling

@@ -22,6 +22,7 @@
 #include <iostream>
 
 // Project headers
+#include "CaseConfiguration.h"
 #include "Scalar.h"
 #include "HaloExchange.h"
 #include "Reduce.h"
@@ -38,34 +39,23 @@
 
 MomentumTransport::MomentumTransport
 (
-    const Mesh& mesh,
-    BoundaryConditions& bc,
-    const TimeScheme& timeScheme,
-    const GradientScheme& gradScheme,
-    TurbulenceModel& turbulence,
-    const Initializer& initializer,
-    Scalar deltaT,
-    Scalar rho,
-    Scalar mu,
-    Count maxIterations,
-    Scalar convergenceTolerance,
-    Count nOuterCorrectors,
-    bool debug
+    const CaseConfiguration& config,
+    const MomentumDependencies& dependencies
 )
 :
-    mesh_{mesh},
-    bcManager_{bc},
-    timeScheme_{timeScheme},
-    gradientScheme_{gradScheme},
-    turbulence_{turbulence},
-    nu_{mu / rho},
-    deltaT_{deltaT},
-    maxIterations_{maxIterations},
-    nOuterCorrectors_{nOuterCorrectors},
-    tolerance_{convergenceTolerance},
-    debug_{debug}
+    mesh_{dependencies.mesh},
+    bcManager_{dependencies.bc},
+    timeScheme_{dependencies.timeScheme},
+    gradientScheme_{dependencies.gradScheme},
+    turbulence_{dependencies.turbulence},
+    nu_{config.mu / config.rho},
+    deltaT_{config.time.timeStep},
+    maxIterations_{config.maxIterations},
+    nOuterCorrectors_{config.time.nOuterCorrectors},
+    tolerance_{config.convergenceTolerance},
+    debug_{config.debug}
 {
-    initializer.initialize(mesh_, bcManager_, Ux_, Uy_, Uz_, p_);
+    dependencies.initializer.initialize(mesh_, bcManager_, Ux_, Uy_, Uz_, p_);
     updateSymmetryBoundaries();
 
     // Initialize RhieChowFlowRate_ with linear interpolation
@@ -117,88 +107,24 @@ MomentumTransport::MomentumTransport
 
 std::unique_ptr<MomentumTransport> MomentumTransport::create
 (
-    const Name& algorithm,
-    const Mesh& mesh,
-    BoundaryConditions& bc,
-    const TimeScheme& timeScheme,
-    const GradientScheme& gradScheme,
-    const ConvectionScheme& momentumConvectionScheme,
-    LinearSolver& momentumSolver,
-    LinearSolver& pressureSolver,
-    TurbulenceModel& turbulence,
-    const Initializer& initializer,
-    Scalar deltaT,
-    Scalar rho,
-    Scalar mu,
-    Scalar alphaU,
-    Scalar alphaP,
-    Count maxIterations,
-    Scalar convergenceTolerance,
-    Count nNonOrthogonalCorrectors,
-    Count nOuterCorrectors,
-    Count nPrimeCorrectors,
-    bool debug
+    const CaseConfiguration& config,
+    const MomentumDependencies& dependencies
 )
 {
-    if (algorithm == "SIMPLE")
+    if (config.algorithm == "SIMPLE")
     {
-        return
-            std::make_unique<SIMPLE>
-            (
-                mesh,
-                bc,
-                timeScheme,
-                gradScheme,
-                momentumConvectionScheme,
-                momentumSolver,
-                pressureSolver,
-                turbulence,
-                initializer,
-                deltaT,
-                rho,
-                mu,
-                alphaU,
-                alphaP,
-                maxIterations,
-                convergenceTolerance,
-                nNonOrthogonalCorrectors,
-                nOuterCorrectors,
-                debug
-            );
+        return std::make_unique<SIMPLE>(config, dependencies);
     }
 
-    if (algorithm == "PISO")
+    if (config.algorithm == "PISO")
     {
-        return
-            std::make_unique<PISO>
-            (
-                mesh,
-                bc,
-                timeScheme,
-                gradScheme,
-                momentumConvectionScheme,
-                momentumSolver,
-                pressureSolver,
-                turbulence,
-                initializer,
-                deltaT,
-                rho,
-                mu,
-                alphaU,
-                alphaP,
-                maxIterations,
-                convergenceTolerance,
-                nNonOrthogonalCorrectors,
-                nOuterCorrectors,
-                nPrimeCorrectors,
-                debug
-            );
+        return std::make_unique<PISO>(config, dependencies);
     }
 
     RuntimeSelection::unknownSelection
     (
         "solution algorithm",
-        algorithm,
+        config.algorithm,
         availableAlgorithms()
     );
 }
