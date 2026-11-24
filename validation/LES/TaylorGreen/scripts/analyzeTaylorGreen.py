@@ -112,17 +112,17 @@ def loadVtkhdfData(vtkhdfPath: str):
     velocity = extractDatasetH5dump(vtkhdfPath, "/VTKHDF/CellData/velocity", "f")
     nut = extractDatasetH5dump(vtkhdfPath, "/VTKHDF/CellData/nut", "f")
 
-    kSgs = None
     try:
         kSgs = extractDatasetH5dump(vtkhdfPath, "/VTKHDF/CellData/k_sgs", "f")
-    except Exception:
-        pass
+    except RuntimeError as exc:
+        print(f"Skipping optional k_sgs dataset: {exc}", file=sys.stderr)
+        kSgs = None
 
-    delta = None
     try:
         delta = extractDatasetH5dump(vtkhdfPath, "/VTKHDF/CellData/delta", "f")
-    except Exception:
-        pass
+    except RuntimeError as exc:
+        print(f"Skipping optional delta dataset: {exc}", file=sys.stderr)
+        delta = None
 
     return {
         "steps": steps,
